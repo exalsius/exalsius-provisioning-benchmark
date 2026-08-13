@@ -268,11 +268,8 @@ add functional criteria of their own):
 
 ---
 
-## 8. Out of scope (T1)
+## 8. Out of scope for WP
 
-- Live execution against real hardware (this is a design-only specification).
-- The workflow *implementation* (T2), scenario *implementations* (T3–T5), and the Grafana
-  dashboard JSON (T6.4) — specified here, delivered in their respective tasks.
 - Model quality / accuracy evaluation — the benchmark validates *provisioning, deployment,
   serving functionality, and telemetry*, not model output quality.
 
