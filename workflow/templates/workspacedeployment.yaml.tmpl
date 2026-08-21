@@ -1,0 +1,34 @@
+# Scenario workload: an llm-d-model WorkspaceDeployment targeting the adopted
+# benchmark cluster. Rendered per scenario by 30-deploy.sh.
+#
+# Topology comes from spec.resources via the WorkspaceClass resourceInjection:
+#   resources.replicas            -> ms.decode.replicas        (S1:1 S2:2 S3:1)
+#   resources.perReplica.gpuCount -> ms.decode.parallelism.tensor (S1:1 S2:1 S3:2)
+# With one L40 per node, gpuCount=2 (S3) is a 2-node tensor-parallel shard.
+# spec.values carries only the user-facing config (token + model URI/name).
+apiVersion: workspaces.exalsius.ai/v1
+kind: WorkspaceDeployment
+metadata:
+  name: ${WORKSPACE_NAME}
+  namespace: ${WORKSPACE_NAMESPACE}
+  labels:
+    benchmark.exalsius.ai/scenario: ${WORKSPACE_NAME}
+spec:
+  workspaceClassRef: ${WORKSPACE_CLASS}
+  clusterDeploymentRef:
+    name: ${CLUSTER_NAME}
+    namespace: ${KCM_NAMESPACE}
+  resources:
+    replicas: ${DECODE_REPLICAS}
+    perReplica:
+      gpuCount: ${GPU_COUNT_PER_REPLICA}
+  values:
+    # huggingfaceToken is a secret-typed field; the operator stores it in a
+    # Secret. Rendered from $HF_TOKEN into the (git-ignored) run manifest.
+    huggingfaceToken: "${HF_TOKEN}"
+    ms:
+      modelArtifacts:
+        uri: "${MODEL_URI}"
+        name: "${MODEL_ID}"
+    # NB: the EPP image fix lives in the WorkspaceClass defaultValues (mandatory,
+    # not a per-deployment knob) — see templates/workspace-class.yaml. 
