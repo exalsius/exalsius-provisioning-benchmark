@@ -1,0 +1,68 @@
+# In-cluster load generator: runs aiperf as a Kubernetes Job against the
+# workspace's OpenAI-compatible Service via cluster DNS. aiperf is distributed as
+# a Python package, so we run a Python base image and `pip install aiperf` at
+# start. The JSON export is streamed out via the pod log
+# (base64 between markers) so no kubectl cp / shared volume is needed.
+#
+# Rendered by 40-execute.sh after the endpoint Service is discovered.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aiperf-${WORKSPACE_NAME}
+  # Runs in the endpoint (gateway) namespace; reaches the gateway over cluster DNS.
+  namespace: ${ENDPOINT_NAMESPACE}
+  labels:
+    benchmark.exalsius.ai/scenario: ${WORKSPACE_NAME}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        benchmark.exalsius.ai/component: aiperf
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: aiperf
+          image: ${AIPERF_IMAGE}
+          imagePullPolicy: IfNotPresent
+          env:
+            # aiperf downloads the tokenizer for --model from Hugging Face.
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ${HF_SECRET_NAME}
+                  key: token
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ${HF_SECRET_NAME}
+                  key: token
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --no-cache-dir --quiet --root-user-action=ignore "${AIPERF_PIP_SPEC}"
+              aiperf profile \
+                --model "${MODEL_ID}" \
+                --tokenizer "${MODEL_ID}" \
+                --url "http://${ENDPOINT_SERVICE}.${ENDPOINT_NAMESPACE}.svc:${ENDPOINT_PORT}" \
+                --endpoint-type chat \
+                -H "${MODEL_HEADER_NAME}:${MODEL_ID}" \
+                --streaming \
+                --concurrency ${LOAD_CONCURRENCY} \
+                --request-count ${LOAD_N_PROMPTS} \
+                --synthetic-input-tokens-mean ${LOAD_INPUT_TOKENS} \
+                --output-tokens-mean ${LOAD_OUTPUT_TOKENS} \
+                --artifact-dir /tmp/aiperf
+              json="$(find /tmp/aiperf -name 'profile_export_aiperf.json' | head -n1)"
+              echo "=====AIPERF_JSON_BEGIN====="
+              base64 "$json"
+              echo "=====AIPERF_JSON_END====="
+          # Kept small: on the single co-located node most CPU is already spoken
+          # for by k0s/KCM/KOF/GPU-operator/the model. aiperf is a client; a low
+          # request lets it schedule (it may cap achievable load — recorded, not gated).
+          resources:
+            requests:
+              cpu: "${AIPERF_CPU_REQUEST}"
+              memory: ${AIPERF_MEM_REQUEST}
