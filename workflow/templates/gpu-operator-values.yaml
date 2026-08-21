@@ -1,0 +1,26 @@
+# GPU operator values for a k0s cluster, from the k0rdent catalog
+# (apps/nvidia/example/values.yaml). k0s uses NON-standard containerd paths, so
+# the nvidia-container-toolkit must be told where k0s's containerd socket/config
+# live — otherwise the `nvidia` runtime class is never wired up and GPUs never
+# become schedulable. (The catalog double-nests under gpu-operator.gpu-operator
+# because it wraps the chart; we install the chart directly, so keys are at root.)
+operator:
+  defaultRuntime: containerd
+toolkit:
+  env:
+    - name: CONTAINERD_CONFIG
+      value: /run/k0s/containerd-cri.toml
+    - name: RUNTIME_DROP_IN_CONFIG
+      value: /etc/k0s/containerd.d/nvidia.toml
+    - name: CONTAINERD_SOCKET
+      value: /run/k0s/containerd.sock
+    - name: CONTAINERD_RUNTIME_CLASS
+      value: nvidia
+# Emit a ServiceMonitor for the DCGM exporter so its DCGM_FI_DEV_* GPU metrics are
+# discovered (by the KOF collectors' target-allocator) and scraped into
+# VictoriaMetrics. The ServiceMonitor CRD comes from KOF (kof-operators); the GPU
+# operator reconciles the ServiceMonitor once that CRD exists.
+dcgmExporter:
+  serviceMonitor:
+    enabled: true
+    interval: 15s

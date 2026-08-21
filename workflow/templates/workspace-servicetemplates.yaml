@@ -1,0 +1,42 @@
+# k0rdent ServiceTemplates for the llm-d workspace charts, sourced from the
+# exalsius-workspace-hub HelmRepository. Applied AFTER the HelmRepository and
+# BEFORE the WorkspaceClass that references them. Phase 2 (prepare).
+apiVersion: k0rdent.mirantis.com/v1beta1
+kind: ServiceTemplate
+metadata:
+  name: llm-d-infra-0-3-0
+  namespace: kcm-system
+  labels:
+    app: llm-d-infra
+    template: workspace
+    workspaces.exalsius.ai/template: llm-d-infra
+    workspaces.exalsius.ai/version: "0.3.0"
+spec:
+  helm:
+    chartSpec:
+      chart: llm-d-infra
+      version: "0.3.0"
+      interval: 10m
+      sourceRef:
+        kind: HelmRepository
+        name: exalsius-workspace-hub
+---
+apiVersion: k0rdent.mirantis.com/v1beta1
+kind: ServiceTemplate
+metadata:
+  name: llm-d-model-0-3-0
+  namespace: kcm-system
+  labels:
+    app: llm-d-model
+    template: workspace
+    workspaces.exalsius.ai/template: llm-d-model
+    workspaces.exalsius.ai/version: "0.3.0"
+spec:
+  helm:
+    chartSpec:
+      chart: llm-d-model
+      version: "0.3.0"
+      interval: 10m
+      sourceRef:
+        kind: HelmRepository
+        name: exalsius-workspace-hub

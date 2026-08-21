@@ -1,0 +1,30 @@
+# Adopts the freshly-bootstrapped k0s cluster into k0rdent so that a
+# WorkspaceDeployment can target it. The kubeconfig Secret is created separately
+# by 20-prepare.sh (from the in-cluster-reachable kubeconfig) because it carries
+# base64 data that is awkward to template.
+#
+# Refs: https://docs.k0rdent.io/latest/admin/clusters/admin-adopting-clusters/
+---
+apiVersion: k0rdent.mirantis.com/v1beta1
+kind: Credential
+metadata:
+  name: ${CREDENTIAL_NAME}
+  namespace: ${KCM_NAMESPACE}
+spec:
+  description: "Adopt the benchmark cluster ${CLUSTER_NAME} (self-managed k0s)"
+  identityRef:
+    apiVersion: v1
+    kind: Secret
+    name: ${KUBECONFIG_SECRET_NAME}
+    namespace: ${KCM_NAMESPACE}
+---
+apiVersion: k0rdent.mirantis.com/v1beta1
+kind: ClusterDeployment
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: ${KCM_NAMESPACE}
+spec:
+  template: ${ADOPTED_CLUSTER_TEMPLATE}
+  credential: ${CREDENTIAL_NAME}
+  dryRun: false
+  config: {}

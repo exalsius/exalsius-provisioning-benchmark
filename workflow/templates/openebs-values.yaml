@@ -1,0 +1,27 @@
+# OpenEBS values. Only the localpv hostpath engine is used; it is made the
+# default StorageClass (openebs-hostpath)
+# so the KOF/VictoriaMetrics PVCs bind. lvmNode.kubeletDir points at the k0s
+# kubelet directory (k0s does not use the default /var/lib/kubelet).
+alloy:
+  enabled: false
+
+engines:
+  local:
+    lvm:
+      enabled: false
+    zfs:
+      enabled: false
+  replicated:
+    mayastor:
+      enabled: false
+
+localpv-provisioner:
+  hostpathClass:
+    isDefaultClass: true
+
+loki:
+  enabled: false
+
+lvm-localpv:
+  lvmNode:
+    kubeletDir: /var/lib/k0s/kubelet/

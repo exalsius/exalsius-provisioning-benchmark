@@ -1,0 +1,102 @@
+# Cluster-scoped WorkspaceClass for llm-d model inference (workspace-hub 0.3.0).
+# Requires the exalsius-workspace-hub HelmRepository + the llm-d-infra/llm-d-model
+# ServiceTemplates to exist first. Applied in phase 2 (prepare).
+#
+# IMPORTANT — resourceInjection is how scenario topology reaches the chart:
+#   resources.replicas          -> ms.decode.replicas
+#   resources.perReplica.gpuCount -> ms.decode.parallelism.tensor
+# i.e. GPUs-per-replica IS the vLLM tensor-parallel width. There is no separate
+# "multinode" switch: with one GPU per node, gpuCount=2 implies a 2-node shard.
+apiVersion: workspaces.exalsius.ai/v1
+kind: WorkspaceClass
+metadata:
+  name: llm-d-model-0-3-0
+  labels:
+    workspaces.exalsius.ai/template: llm-d-model
+    workspaces.exalsius.ai/version: "0.3.0"
+spec:
+  displayName: "LLM Inference (model)"
+  description: >-
+    Serve one LLM for inference with the llm-d stack (GAIE + vLLM). Exposes a
+    per-workspace OpenAI-compatible endpoint; auto-installs the shared llm-d-infra
+    prerequisite.
+  serviceTemplate:
+    name: llm-d-model-0-3-0
+    namespace: kcm-system
+  prerequisites:
+    - serviceTemplate:
+        name: llm-d-infra-0-3-0
+  defaultResources:
+    replicas: 1
+    perReplica:
+      cpu: "4"
+      memory: "16Gi"
+      storage: "50Gi"
+      # A model needs at least one accelerator; a deployment can raise this.
+      gpuCount: 1
+  # Base Helm values always applied to the chart. The chart default EPP image
+  # (ghcr.io/llm-d/llm-d-inference-scheduler:v0.7.0) was DELETED upstream — the
+  # repo was renamed to llm-d-router and v0.7.0 was never republished. Pin the
+  # upstream Gateway API Inference Extension EPP instead. Not user-configurable:
+  # this is a mandatory fix, so it lives in defaultValues, not userFacingConfig.
+  defaultValues:
+    ip:
+      inferenceExtension:
+        image:
+          hub: registry.k8s.io/gateway-api-inference-extension
+          name: epp
+          tag: v1.4.0
+  # Umbrella mapping: route resolved _exalsius fields into the modelservice
+  # subchart. gpuCount drives vLLM tensor-parallelism (the subchart auto-derives
+  # the GPU resource request from it); gpuVendor selects the accelerator family.
+  # cpu/memory are not injected — the modelservice container resources live in a
+  # list path with no clean scalar target.
+  resourceInjection:
+    gpuCount:
+      - "ms.decode.parallelism.tensor"
+    gpuVendor:
+      - "ms.accelerator.type"
+    replicas:
+      - "ms.decode.replicas"
+  accessEndpoints:
+    - name: http
+      protocol: HTTP
+      port: 8000
+      description: "LLM Inference OpenAI-compatible REST API"
+    # A per-model front door to the single shared Open WebUI chat interface. Backed
+    # by the in-namespace "<release>-chat" redirect Service (llm-d-model templates)
+    # forwarding to the shared "llm-d-open-webui" Service in default. Open WebUI is
+    # routed here, per model, because it lives in the llm-d-infra prerequisite,
+    # which owns no WorkspaceClass and so cannot own a routed endpoint.
+    # Port 8000 (not 80): the backing "<release>-chat" Service must target the model
+    # pods' real port so the ambient global-service federation publishes endpoints
+    # (see llm-d-model templates/networking.yaml). The user-facing URL is
+    # hostname-based, so the port is invisible to users.
+    - name: chat
+      protocol: HTTP
+      port: 8000
+      description: "Open WebUI chat interface (shared across all models)"
+  userFacingConfig:
+    - helmValuePath: huggingfaceToken
+      displayName: "Hugging Face Token"
+      description: "Token for pulling the model from Hugging Face (stored in a Secret)"
+      type: secret
+      required: true
+    - helmValuePath: inferenceApiKey
+      displayName: "Inference API Key"
+      description: "Optional bearer token clients must present to call the model"
+      type: secret
+      required: false
+    - helmValuePath: ms.modelArtifacts.uri
+      displayName: "Model URI"
+      description: "Hugging Face model URI, e.g. hf://Qwen/Qwen3-1.7B"
+      type: string
+      required: true
+    - helmValuePath: ms.modelArtifacts.name
+      displayName: "Model Name"
+      description: "Served model name, e.g. Qwen/Qwen3-1.7B"
+      type: string
+      required: true
+  # vLLM/cuda images are large and the prerequisite installs a full stack.
+  deployTimeout: 30m
+  prerequisiteDeployTimeout: 20m
