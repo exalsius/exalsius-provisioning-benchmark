@@ -52,10 +52,21 @@ spec:
                 --streaming \
                 --concurrency ${LOAD_CONCURRENCY} \
                 --request-count ${LOAD_N_PROMPTS} \
+                --warmup-request-count ${LOAD_WARMUP_PROMPTS} \
+                --wait-for-model-timeout ${AIPERF_MODEL_READY_TIMEOUT} \
+                --request-timeout-seconds ${AIPERF_REQUEST_TIMEOUT} \
                 --synthetic-input-tokens-mean ${LOAD_INPUT_TOKENS} \
                 --output-tokens-mean ${LOAD_OUTPUT_TOKENS} \
                 --artifact-dir /tmp/aiperf
-              json="$(find /tmp/aiperf -name 'profile_export_aiperf.json' | head -n1)"
+              # find always exits 0, so an empty result would silently produce an
+              # empty export — check explicitly and fail loudly with diagnostics.
+              json="$(find /tmp/aiperf -type f -name 'profile_export_aiperf.json' -print -quit)"
+              if [[ -z "$json" || ! -s "$json" ]]; then
+                echo "ERROR: aiperf JSON export not found or empty" >&2
+                echo "Artifacts produced under /tmp/aiperf:" >&2
+                find /tmp/aiperf -type f -print >&2 || true
+                exit 1
+              fi
               echo "=====AIPERF_JSON_BEGIN====="
               base64 "$json"
               echo "=====AIPERF_JSON_END====="

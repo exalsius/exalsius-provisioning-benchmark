@@ -93,7 +93,8 @@ _aiperf_load() {
   log "launching aiperf Job (${LOAD_N_PROMPTS} req @ concurrency ${LOAD_CONCURRENCY})"
   run kubectl -n "$ns" apply -f "$RUN_DIR/manifests/aiperf-job.yaml" 2>&1 | tee -a "$logf"
 
-  # Wait for completion (or failure).
+  # Block until the Job reaches a terminal state — whichever of complete/failed
+  # fires first (with backoffLimit 0, a pod error surfaces as condition=failed).
   kubectl -n "$ns" wait --for=condition=complete "job/$job" --timeout=1800s >>"$logf" 2>&1 &
   local w1=$!
   kubectl -n "$ns" wait --for=condition=failed "job/$job" --timeout=1800s >>"$logf" 2>&1 &
@@ -101,14 +102,28 @@ _aiperf_load() {
   wait -n "$w1" "$w2" 2>/dev/null || true
   kill "$w1" "$w2" 2>/dev/null || true
 
-  # Capture the full pod log, then extract the base64 JSON export.
+  # Always capture the full pod log (diagnostics + JSON extraction source).
   kubectl -n "$ns" logs "job/$job" > "$RUN_DIR/results/aiperf.log" 2>>"$logf" || true
+
+  # The load probe is a functional acceptance artifact: a failed Job (or a Job
+  # that never reached success) is a hard failure, not a warning.
+  local succeeded failed
+  succeeded="$(kubectl -n "$ns" get job "$job" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)"
+  failed="$(kubectl -n "$ns" get job "$job" -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)"
+  if [[ "${succeeded:-0}" != "1" ]]; then
+    err "aiperf Job did not complete (succeeded=${succeeded:-0} failed=${failed:-0}); last log lines:"
+    tail -n 40 "$RUN_DIR/results/aiperf.log" >&2 2>/dev/null || true
+    die "aiperf load generation failed (see results/aiperf.log)"
+  fi
+
+  # Extract + validate the base64 JSON export; a missing/invalid export fails.
   if sed -n '/=====AIPERF_JSON_BEGIN=====/,/=====AIPERF_JSON_END=====/p' \
         "$RUN_DIR/results/aiperf.log" | sed '1d;$d' | base64 -d \
         > "$RUN_DIR/results/aiperf.json" 2>/dev/null && \
-     [[ -s "$RUN_DIR/results/aiperf.json" ]]; then
+     [[ -s "$RUN_DIR/results/aiperf.json" ]] && \
+     jq -e . "$RUN_DIR/results/aiperf.json" >/dev/null 2>&1; then
     info "aiperf results captured -> results/aiperf.json"
   else
-    warn "could not extract aiperf JSON export (see results/aiperf.log)"
+    die "aiperf JSON export missing or invalid (see results/aiperf.log)"
   fi
 }
