@@ -79,10 +79,14 @@ phase_bootstrap() {
   run k0sctl apply --config "$cfg" --disable-telemetry 2>&1 | tee -a "$logf"
 
   log "exporting kubeconfig -> ${KUBECONFIG_OUT#"$WORKFLOW_ROOT"/}"
-  if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    k0sctl kubeconfig --config "$cfg" > "$KUBECONFIG_OUT"
-    chmod 600 "$KUBECONFIG_OUT"
+  # Dry-run created no cluster and no kubeconfig, so the real readiness checks
+  # below would hang/fail against nothing — stop here.
+  if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    info "[dry-run] would export kubeconfig and wait for all nodes Ready"
+    return 0
   fi
+  k0sctl kubeconfig --config "$cfg" > "$KUBECONFIG_OUT"
+  chmod 600 "$KUBECONFIG_OUT"
 
   wait_for "$TIMEOUT_BOOTSTRAP" "all nodes Ready" \
     bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl get nodes | grep -qc " Ready "'
