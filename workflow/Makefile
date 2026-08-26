@@ -37,7 +37,8 @@ docker-run: build ## Build the image, then run a scenario in it (SCENARIO=s1|s2|
 	key="$${key/#\~/$$HOME}"; \
 	[ -f "$$key" ] || { echo "SSH key not found: $$key"; exit 1; }; \
 	echo "mounting SSH key: $$key"; \
-	docker run --rm -it \
+	tty=; [ -t 0 ] && [ -t 1 ] && tty=-it; \
+	docker run --rm $$tty \
 	  -e HF_TOKEN -e NODE_ENDPOINTS -e SSH_USERNAME -e RUN_ID="$(RUN_ID)" \
 	  -e SSH_KEY_PATH=/root/.ssh/id_rsa \
 	  -e MODEL_ID -e DECODE_REPLICAS -e GPU_COUNT_PER_REPLICA \
@@ -59,7 +60,8 @@ docker-cleanup: build ## Tear down the cluster from a run (k0sctl reset) in the 
 	if [ -z "$$key" ]; then read -r -p "Path to the SSH private key for the nodes: " key; fi; \
 	key="$${key/#\~/$$HOME}"; \
 	[ -f "$$key" ] || { echo "SSH key not found: $$key"; exit 1; }; \
-	docker run --rm -it \
+	tty=; [ -t 0 ] && [ -t 1 ] && tty=-it; \
+	docker run --rm $$tty \
 	  -e SSH_KEY_PATH=/root/.ssh/id_rsa -e RUN_ID="$(RUN_ID)" \
 	  -v "$$key":/root/.ssh/id_rsa:ro \
 	  -v $(RUNS_DIR):/workflow/runs \
