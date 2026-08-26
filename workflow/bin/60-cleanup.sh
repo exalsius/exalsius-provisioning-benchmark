@@ -16,19 +16,18 @@ phase_cleanup() {
   fi
 
   # Destroy k0s on the nodes. This removes everything installed this run.
-  # When cleanup runs standalone (e.g. `--only cleanup` in a fresh run dir), the
-  # current dir has no k0sctl.yaml — fall back to the newest previous run's.
+  # We operate ONLY on THIS run's k0sctl.yaml — never a previous run's. If the
+  # current run never got as far as generating one (e.g. an EXIT-trap cleanup
+  # after a preflight failure, or `--only cleanup` pointed at the wrong run id),
+  # skip the reset rather than risk resetting an unrelated cluster.
   local cfg="$RUN_DIR/manifests/k0sctl.yaml"
-  if [[ ! -f "$cfg" ]]; then
-    cfg="$(ls -1t "$WORKFLOW_ROOT/runs/$SCENARIO"/*/manifests/k0sctl.yaml 2>/dev/null | head -1 || true)"
-    [[ -n "$cfg" ]] && warn "using k0sctl.yaml from a previous run: ${cfg#"$WORKFLOW_ROOT"/}"
-  fi
-  if [[ -n "$cfg" && -f "$cfg" ]]; then
+  if [[ -f "$cfg" ]]; then
     log "k0sctl reset (destroying the cluster on the nodes)"
     run k0sctl reset --config "$cfg" --force --disable-telemetry 2>&1 | tee -a "$logf" || \
       warn "k0sctl reset reported errors (see $logf)"
   else
-    warn "no k0sctl.yaml found; skipping reset (was the cluster ever bootstrapped?)"
+    warn "no k0sctl.yaml in this run (${RUN_DIR#"$WORKFLOW_ROOT"/}); skipping reset."
+    warn "to tear down a specific run, re-run: run.sh $SCENARIO --only cleanup --run-id <that run's id>"
   fi
 
   # Drop the local kubeconfig so preflight of the next run starts clean.
