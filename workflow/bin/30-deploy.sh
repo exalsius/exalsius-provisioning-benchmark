@@ -2,6 +2,15 @@
 # Phase 3 — Deploy. Render + apply the scenario WorkspaceDeployment onto the
 # adopted cluster and wait for the llm-d endpoint. Defines phase_deploy.
 
+# Replace any huggingfaceToken value in a persisted YAML with a placeholder, so
+# the run directory never keeps the plaintext secret. Best-effort (no-op if the
+# file is absent or holds no token).
+_redact_hf_token() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  sed -i 's#\(huggingfaceToken:\)[[:space:]]*.*#\1 "***REDACTED***"#' "$file" 2>/dev/null || true
+}
+
 phase_deploy() {
   local logf="$RUN_DIR/deploy.log"; : > "$logf"
   resolve_hf_token   # rendered into the WorkspaceDeployment (also when run via --from deploy)
@@ -10,6 +19,11 @@ phase_deploy() {
   render "$WORKFLOW_ROOT/templates/workspacedeployment.yaml.tmpl" \
          "$RUN_DIR/manifests/workspacedeployment.yaml"
   run kc apply -f "$RUN_DIR/manifests/workspacedeployment.yaml" 2>&1 | tee -a "$logf"
+  # The rendered manifest carries the HF token (a secret-typed value the operator
+  # needs at apply time). Redact it from the persisted artifact immediately after
+  # apply, so the run directory never retains the plaintext secret (it could
+  # otherwise leak via CI artifacts or archived runs).
+  _redact_hf_token "$RUN_DIR/manifests/workspacedeployment.yaml"
 
   # NOTE: no vLLM scrape object is created here — the llm-d-stack prerequisite
   # (installed by the operator) / the llm-d-model chart ship their own
@@ -24,6 +38,8 @@ phase_deploy() {
 
   kc -n "$WORKSPACE_NAMESPACE" get workspacedeployment "$WORKSPACE_NAME" -o yaml \
     > "$RUN_DIR/manifests/workspacedeployment.status.yaml" 2>/dev/null || true
+  # The live CR echoes the token back in spec.values — redact the dump too.
+  _redact_hf_token "$RUN_DIR/manifests/workspacedeployment.status.yaml"
   kc -n "$WORKSPACE_NAMESPACE" get pods -o wide 2>/dev/null | tee -a "$logf" || true
 
   _discover_endpoint | tee "$RUN_DIR/endpoint.env"
