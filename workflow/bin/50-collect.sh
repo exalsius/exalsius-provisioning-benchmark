@@ -55,8 +55,14 @@ phase_collect() {
   kc -n "$WORKSPACE_NAMESPACE" describe workspacedeployment "$WORKSPACE_NAME" \
     > "$RUN_DIR/results/workspace-describe.txt" 2>/dev/null || true
 
+  # Write the report first (so the artifact exists even on failure), then enforce
+  # the telemetry acceptance gate: presence of all required series is a hard
+  # requirement (README §Acceptance), so a gap fails the run — not just a warning.
   _write_report "${#missing[@]}"
   info "collection complete -> ${RUN_DIR#"$WORKFLOW_ROOT"/}/run-report.md"
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    die "telemetry acceptance not met: ${#missing[@]} required metric series missing (${missing[*]})"
+  fi
 }
 
 _write_report() {
