@@ -16,7 +16,7 @@ used.
 |-------|--------|--------|
 | preflight | [`bin/00-preflight.sh`](bin/00-preflight.sh) | Check tooling, inputs, SSH/GPU reachability, node count. |
 | bootstrap | [`bin/10-bootstrap.sh`](bin/10-bootstrap.sh) | `k0sctl` brings up k0s on the provided SSH nodes; export kubeconfig. |
-| prepare | [`bin/20-prepare.sh`](bin/20-prepare.sh) | Install OpenEBS (default StorageClass) + GPU operator; k0rdent/KCM; **KOF** (VictoriaMetrics storage + OTel collectors, regionless); exalsius-operator; **adopt** the cluster into k0rdent; register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-0-3-0` WorkspaceClass). |
+| prepare | [`bin/20-prepare.sh`](bin/20-prepare.sh) | Install OpenEBS (default StorageClass) + GPU operator; k0rdent/KCM; **KOF** (VictoriaMetrics storage + OTel collectors, regionless); exalsius-operator; **adopt** the cluster into k0rdent; register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). |
 | deploy | [`bin/30-deploy.sh`](bin/30-deploy.sh) | Render + apply the scenario `WorkspaceDeployment`; wait for the endpoint. |
 | execute | [`bin/40-execute.sh`](bin/40-execute.sh) | Functional probe (in-cluster curl) + load probe (**aiperf** as an in-cluster Job). |
 | collect | [`bin/50-collect.sh`](bin/50-collect.sh) | Snapshot required metric series from **VictoriaMetrics** (KOF); write `run-report.md`. |
@@ -75,27 +75,39 @@ make docker-cleanup SCENARIO=s1                               # tear the cluster
 - [`config/common.env`](config/common.env) — shared defaults: model, chart names/versions,
   namespaces, adoption template, load parameters.
 - [`config/scenario-s1.env`](config/scenario-s1.env) / `-s2` / `-s3` — the per-scenario topology
-  deltas (`DECODE_REPLICAS`, `GPU_COUNT_PER_REPLICA`, `EXPECTED_NODE_COUNT`, names). These are the
-  only differences between scenarios.
+  deltas (`REPLICAS`, `GPU_COUNT_PER_REPLICA`, `NODES_PER_REPLICA`, `EXPECTED_NODE_COUNT`, names).
+  These are the only differences between scenarios.
 
-The forwarded knobs (`MODEL_ID`, `NODE_ENDPOINTS`, `SSH_USERNAME`, `DECODE_REPLICAS`,
-`GPU_COUNT_PER_REPLICA`, …) can be overridden from the environment, e.g.
-`MODEL_ID=Qwen/Qwen3-32B make docker-run SCENARIO=s3`.
+The forwarded knobs (`MODEL_ID`, `NODE_ENDPOINTS`, `SSH_USERNAME`, `REPLICAS`,
+`GPU_COUNT_PER_REPLICA`, `NODES_PER_REPLICA`, `WORKSPACE_CPU`, …) can be overridden from the
+environment, e.g. `MODEL_ID=Qwen/Qwen3-32B make docker-run SCENARIO=s3`.
 
 ## Scenario → topology
 
-| | Nodes | `DECODE_REPLICAS` | `GPU_COUNT_PER_REPLICA` | Meaning |
-|--|:--:|:--:|:--:|--|
-| **s1** single-node | 1 | 1 | 1 | one replica on one GPU |
-| **s2** replicated | 2 | 2 | 1 | two replicas, one GPU each |
-| **s3** sharded | 2 | 1 | 2 | one replica, tensor-parallel across 2 GPUs/nodes |
+| | Nodes | `REPLICAS` | `GPU_COUNT_PER_REPLICA` | `NODES_PER_REPLICA` | Meaning |
+|--|:--:|:--:|:--:|:--:|--|
+| **s1** single-node | 1 | 1 | 1 | 1 | one model on one GPU (TP=1) |
+| **s2** replicated | 2 | 2 | 1 | 1 | two independent models, one GPU each (TP=1) |
+| **s3** sharded | 2 | 2 | 1 | 2 | one model sharded across 2 nodes (TP=2) |
 
-The `llm-d-model-0-3-0` WorkspaceClass **injects** these `spec.resources` into the chart:
-`resources.replicas → ms.decode.replicas` and `resources.perReplica.gpuCount →
-ms.decode.parallelism.tensor` (GPUs-per-replica *is* the tensor-parallel width; there is no
-separate `multinode` switch). See
+Under workspace-hub **1.0.0** (llm-d 0.9.0) the `llm-d-model-1-0-0` chart owns the vLLM
+workload (a **LeaderWorkerSet**) and reads the operator's `_exalsius.resources` directly — there
+is no `resourceInjection`. `REPLICAS` is the number of **pods** and `GPU_COUNT_PER_REPLICA` the GPUs
+per pod (both injected via `spec.resources`); the single-node/multi-node split is one Helm value,
+`modelServer.nodesPerReplica`:
+
+```
+tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_REPLICA
+model copies         = REPLICAS / NODES_PER_REPLICA          (REPLICAS must be a multiple)
+```
+
+So s3 asks for the same resources as s2 (2 pods × 1 GPU); `NODES_PER_REPLICA=2` makes those two
+pods **one** model sharded across both nodes instead of two independent replicas. See
 [`templates/workspacedeployment.yaml.tmpl`](templates/workspacedeployment.yaml.tmpl) and
 [`templates/workspace-class.yaml`](templates/workspace-class.yaml).
+
+> **Driver floor:** llm-d 0.9.0's CUDA 13 image requires **NVIDIA driver ≥ 580** on the nodes; the
+> GPU operator version in `config/common.env` must ship a ≥580 driver branch.
 
 ## Artifacts
 

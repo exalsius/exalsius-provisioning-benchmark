@@ -41,7 +41,7 @@ docker-run: build ## Build the image, then run a scenario in it (SCENARIO=s1|s2|
 	docker run --rm $$tty \
 	  -e HF_TOKEN -e NODE_ENDPOINTS -e SSH_USERNAME -e RUN_ID="$(RUN_ID)" \
 	  -e SSH_KEY_PATH=/root/.ssh/id_rsa \
-	  -e MODEL_ID -e DECODE_REPLICAS -e GPU_COUNT_PER_REPLICA \
+	  -e MODEL_ID -e REPLICAS -e GPU_COUNT_PER_REPLICA -e NODES_PER_REPLICA -e WORKSPACE_CPU \
 	  -v "$$key":/root/.ssh/id_rsa:ro \
 	  -v $(RUNS_DIR):/workflow/runs \
 	  $(IMAGE) $(SCENARIO) $(RUN_FLAGS)

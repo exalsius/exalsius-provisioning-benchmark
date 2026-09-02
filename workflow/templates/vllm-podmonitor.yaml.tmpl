@@ -1,0 +1,34 @@
+# vLLM model-server metrics scrape (workspace-hub 1.0.0).
+#
+# The 1.0.0 llm-d-model chart ships NO ServiceMonitor/PodMonitor for the vLLM
+# pods (its router subchart's ServiceMonitor scrapes the endpoint-picker only),
+# so the workflow provides one. A PodMonitor scrapes the model pods directly by
+# their stable labels — no dependency on the <release>-http redirect Service.
+#
+# Leaders only: in a sharded (multi-node) deployment only the LeaderWorkerSet
+# leader (worker-index 0) runs an HTTP server; workers expose no /metrics, so
+# matching worker-index 0 avoids dead targets. Independent replicas are each
+# their own group's leader, so all of them are still matched.
+#
+# Discovered automatically by the KOF collectors' target-allocator (it watches
+# PodMonitors cluster-wide) and scraped into VictoriaMetrics. Rendered + applied
+# by 30-deploy.sh.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ${WORKSPACE_NAME}-vllm
+  namespace: ${WORKSPACE_SERVICE_NAMESPACE}
+  labels:
+    benchmark.exalsius.ai/scenario: ${WORKSPACE_NAME}
+spec:
+  namespaceSelector:
+    matchNames:
+      - ${WORKSPACE_SERVICE_NAMESPACE}
+  selector:
+    matchLabels:
+      llm-d.ai/inference-serving: "true"
+      leaderworkerset.sigs.k8s.io/worker-index: "0"
+  podMetricsEndpoints:
+    - port: vllm          # the model container's named metrics port (8000)
+      path: /metrics
+      interval: 15s

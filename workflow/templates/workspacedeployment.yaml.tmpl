@@ -1,11 +1,15 @@
 # Scenario workload: an llm-d-model WorkspaceDeployment targeting the adopted
 # benchmark cluster. Rendered per scenario by 30-deploy.sh.
 #
-# Topology comes from spec.resources via the WorkspaceClass resourceInjection:
-#   resources.replicas            -> ms.decode.replicas        (S1:1 S2:2 S3:1)
-#   resources.perReplica.gpuCount -> ms.decode.parallelism.tensor (S1:1 S2:1 S3:2)
-# With one L40 per node, gpuCount=2 (S3) is a 2-node tensor-parallel shard.
-# spec.values carries only the user-facing config (token + model URI/name).
+# Topology (workspace-hub 1.0.0 / llm-d 0.9.0) — the chart owns a LeaderWorkerSet
+# and reads _exalsius.resources directly (no resourceInjection):
+#   resources.replicas            -> total model-server pods
+#   resources.perReplica.gpuCount -> GPUs per pod  (--tensor-parallel-size = gpuCount × nodesPerReplica)
+#   values.modelServer.nodesPerReplica -> pods per model copy (1 = whole model per pod)
+# so model copies = replicas / nodesPerReplica. Per scenario:
+#   S1 single-node   replicas=1 gpuCount=1 nodesPerReplica=1  -> 1 model,  TP=1
+#   S2 replicated    replicas=2 gpuCount=1 nodesPerReplica=1  -> 2 models, TP=1
+#   S3 sharded       replicas=2 gpuCount=1 nodesPerReplica=2  -> 1 model,  TP=2 (across 2 nodes)
 apiVersion: workspaces.exalsius.ai/v1
 kind: WorkspaceDeployment
 metadata:
@@ -19,16 +23,29 @@ spec:
     name: ${CLUSTER_NAME}
     namespace: ${KCM_NAMESPACE}
   resources:
-    replicas: ${DECODE_REPLICAS}
+    replicas: ${REPLICAS}
     perReplica:
+      # cpu is set explicitly (below the class default of 8) so the model pod
+      # fits alongside k0s/KCM/KOF/GPU-operator on the co-located benchmark node.
+      # memory/storage fall back to the WorkspaceClass defaults (16Gi/50Gi).
+      cpu: "${WORKSPACE_CPU}"
       gpuCount: ${GPU_COUNT_PER_REPLICA}
+      # REQUIRED. The operator resolves the GPU extended-resource name from the
+      # vendor (NVIDIA -> nvidia.com/gpu) and injects it as
+      # _exalsius.resources.perReplica.gpuResourceName; the llm-d-model chart only
+      # renders a GPU request when that is set. With NEITHER gpuVendor NOR a
+      # gpuNodeSelector the operator injects gpuCount but no resource name, the
+      # chart drops the GPU request, and vLLM starts CPU-only and crashes
+      # ("Failed to infer device type"). gpuVendor is used (not a gpuNodeSelector)
+      # so it does not depend on a GFD node label matching a specific GPU product.
+      gpuVendor: ${GPU_VENDOR}
   values:
     # huggingfaceToken is a secret-typed field; the operator stores it in a
-    # Secret. Rendered from $HF_TOKEN into the (git-ignored) run manifest.
+    # Secret. Rendered from $HF_TOKEN into the run manifest, then redacted from
+    # the persisted copy by 30-deploy.sh right after apply.
     huggingfaceToken: "${HF_TOKEN}"
-    ms:
-      modelArtifacts:
-        uri: "${MODEL_URI}"
-        name: "${MODEL_ID}"
-    # NB: the EPP image fix lives in the WorkspaceClass defaultValues (mandatory,
-    # not a per-deployment knob) — see templates/workspace-class.yaml. 
+    model:
+      # The vLLM model argument AND the name clients send / the gateway routes on.
+      name: "${MODEL_ID}"
+    modelServer:
+      nodesPerReplica: ${NODES_PER_REPLICA}

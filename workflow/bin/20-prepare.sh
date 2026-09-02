@@ -162,8 +162,8 @@ phase_prepare() {
   run kc apply -f "$WORKFLOW_ROOT/templates/workspace-helmrepository.yaml" 2>&1 | tee -a "$logf"
   run kc apply -f "$WORKFLOW_ROOT/templates/workspace-servicetemplates.yaml" 2>&1 | tee -a "$logf"
   # Let k0rdent/Flux reconcile the ServiceTemplates before the class references them.
-  wait_for 300 "ServiceTemplate llm-d-model-0-3-0 valid" \
-    bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$KCM_NAMESPACE"'" get servicetemplate llm-d-model-0-3-0 -o jsonpath="{.status.valid}" | grep -q true' || \
+  wait_for 300 "ServiceTemplate llm-d-model-1-0-0 valid" \
+    bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$KCM_NAMESPACE"'" get servicetemplate llm-d-model-1-0-0 -o jsonpath="{.status.valid}" | grep -q true' || \
     warn "ServiceTemplate not reported valid yet"
   run kc apply -f "$WORKFLOW_ROOT/templates/workspace-class.yaml" 2>&1 | tee -a "$logf"
 

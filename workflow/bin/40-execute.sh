@@ -31,15 +31,17 @@ phase_execute() {
   info "execution complete"
 }
 
-# Gate the probe on real readiness: the gateway must be up AND the model's decode
-# pod must be Ready (serving) before we send traffic.
+# Gate the probe on real readiness: the gateway must be up AND the model's
+# serving pod must be Ready before we send traffic. In workspace-hub 1.0.0 the
+# workload is a LeaderWorkerSet; only the leader (worker-index 0) runs the API
+# server, so we wait on the serving leader (label-selected, release-independent).
 _wait_endpoint_ready() {
   local logf="$1"
   wait_for 300 "gateway ${ENDPOINT_SERVICE} (${ENDPOINT_NAMESPACE}) has endpoints" \
     svc_has_endpoints "$ENDPOINT_NAMESPACE" "$ENDPOINT_SERVICE"
-  wait_for "${TIMEOUT_WORKSPACE:-1500}" "model decode pod Ready in ${WORKSPACE_SERVICE_NAMESPACE}" \
-    bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$WORKSPACE_SERVICE_NAMESPACE"'" get pod -l llm-d.ai/role=decode -o jsonpath="{.items[*].status.conditions[?(@.type==\"Ready\")].status}" 2>/dev/null | grep -q True'
-  info "gateway up + model decode pod serving"
+  wait_for "${TIMEOUT_WORKSPACE:-1500}" "model server leader Ready in ${WORKSPACE_SERVICE_NAMESPACE}" \
+    bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$WORKSPACE_SERVICE_NAMESPACE"'" get pod -l llm-d.ai/inference-serving=true,leaderworkerset.sigs.k8s.io/worker-index=0 -o jsonpath="{.items[*].status.conditions[?(@.type==\"Ready\")].status}" 2>/dev/null | grep -q True'
+  info "gateway up + model server leader serving"
 }
 
 # Gate: a deterministic request via an ephemeral in-cluster curl pod, RETRIED

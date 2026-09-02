@@ -92,7 +92,7 @@ _write_report() {
     echo
     echo "- **Scenario:** ${SCENARIO} (${WORKSPACE_NAME})"
     echo "- **Cluster:** ${CLUSTER_NAME}  ·  **Model:** ${MODEL_ID}"
-    echo "- **Topology:** replicas=${DECODE_REPLICAS} (ms.decode.replicas), gpu/replica=${GPU_COUNT_PER_REPLICA} (ms.decode.parallelism.tensor)"
+    echo "- **Topology:** replicas=${REPLICAS} pods · gpu/pod=${GPU_COUNT_PER_REPLICA} · nodes/replica=${NODES_PER_REPLICA} (tensor-parallel size $((GPU_COUNT_PER_REPLICA * NODES_PER_REPLICA)))"
     echo "- **Load tool:** aiperf (in-cluster Job)  ·  **Run dir:** \`${RUN_DIR#"$WORKFLOW_ROOT"/}\`"
     echo
     echo "## Phases"

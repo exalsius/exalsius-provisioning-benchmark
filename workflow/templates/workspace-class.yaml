@@ -1,77 +1,50 @@
-# Cluster-scoped WorkspaceClass for llm-d model inference (workspace-hub 0.3.0).
-# Requires the exalsius-workspace-hub HelmRepository + the llm-d-infra/llm-d-model
-# ServiceTemplates to exist first. Applied in phase 2 (prepare).
+# Cluster-scoped WorkspaceClass for llm-d model inference (workspace-hub 1.0.0,
+# llm-d 0.9.0). Mirrors the hub's rendered manifests/llm-d-model/1.0.0/
+# workspaceclass.yaml. Requires the exalsius-workspace-hub HelmRepository + the
+# llm-d-infra/llm-d-model ServiceTemplates to exist first. Applied in phase 2.
 #
-# IMPORTANT — resourceInjection is how scenario topology reaches the chart:
-#   resources.replicas          -> ms.decode.replicas
-#   resources.perReplica.gpuCount -> ms.decode.parallelism.tensor
-# i.e. GPUs-per-replica IS the vLLM tensor-parallel width. There is no separate
-# "multinode" switch: with one GPU per node, gpuCount=2 implies a 2-node shard.
+# The chart owns the vLLM workload (a LeaderWorkerSet) and reads the operator's
+# `_exalsius.resources` directly, so there is NO resourceInjection and NO EPP
+# defaultValues override any more (both were 0.3.0 artefacts). Topology is one
+# Helm value, modelServer.nodesPerReplica:
+#   TP           = modelServer.nodesPerReplica × perReplica.gpuCount
+#   model copies = replicas / modelServer.nodesPerReplica
 apiVersion: workspaces.exalsius.ai/v1
 kind: WorkspaceClass
 metadata:
-  name: llm-d-model-0-3-0
+  name: llm-d-model-1-0-0
   labels:
     workspaces.exalsius.ai/template: llm-d-model
-    workspaces.exalsius.ai/version: "0.3.0"
+    workspaces.exalsius.ai/version: "1.0.0"
 spec:
   displayName: "LLM Inference (model)"
   description: >-
-    Serve one LLM for inference with the llm-d stack (GAIE + vLLM). Exposes a
-    per-workspace OpenAI-compatible endpoint; auto-installs the shared llm-d-infra
-    prerequisite.
+    Serve one LLM for inference with the llm-d stack (llm-d router + vLLM).
+    Exposes a per-workspace OpenAI-compatible endpoint; auto-installs the shared
+    llm-d-infra prerequisite.
   serviceTemplate:
-    name: llm-d-model-0-3-0
+    name: llm-d-model-1-0-0
     namespace: kcm-system
   prerequisites:
     - serviceTemplate:
-        name: llm-d-infra-0-3-0
+        name: llm-d-infra-1-0-0
   defaultResources:
     replicas: 1
     perReplica:
-      cpu: "4"
+      cpu: "8"
       memory: "16Gi"
+      # Sizes the model cache volume (HF_HOME) — must fit the model weights.
       storage: "50Gi"
       # A model needs at least one accelerator; a deployment can raise this.
       gpuCount: 1
-  # Base Helm values always applied to the chart. The chart default EPP image
-  # (ghcr.io/llm-d/llm-d-inference-scheduler:v0.7.0) was DELETED upstream — the
-  # repo was renamed to llm-d-router and v0.7.0 was never republished. Pin the
-  # upstream Gateway API Inference Extension EPP instead. Not user-configurable:
-  # this is a mandatory fix, so it lives in defaultValues, not userFacingConfig.
-  defaultValues:
-    ip:
-      inferenceExtension:
-        image:
-          hub: registry.k8s.io/gateway-api-inference-extension
-          name: epp
-          tag: v1.4.0
-  # Umbrella mapping: route resolved _exalsius fields into the modelservice
-  # subchart. gpuCount drives vLLM tensor-parallelism (the subchart auto-derives
-  # the GPU resource request from it); gpuVendor selects the accelerator family.
-  # cpu/memory are not injected — the modelservice container resources live in a
-  # list path with no clean scalar target.
-  resourceInjection:
-    gpuCount:
-      - "ms.decode.parallelism.tensor"
-    gpuVendor:
-      - "ms.accelerator.type"
-    replicas:
-      - "ms.decode.replicas"
   accessEndpoints:
     - name: http
       protocol: HTTP
       port: 8000
       description: "LLM Inference OpenAI-compatible REST API"
-    # A per-model front door to the single shared Open WebUI chat interface. Backed
-    # by the in-namespace "<release>-chat" redirect Service (llm-d-model templates)
-    # forwarding to the shared "llm-d-open-webui" Service in default. Open WebUI is
-    # routed here, per model, because it lives in the llm-d-infra prerequisite,
-    # which owns no WorkspaceClass and so cannot own a routed endpoint.
-    # Port 8000 (not 80): the backing "<release>-chat" Service must target the model
-    # pods' real port so the ambient global-service federation publishes endpoints
-    # (see llm-d-model templates/networking.yaml). The user-facing URL is
-    # hostname-based, so the port is invisible to users.
+    # A per-model front door to the single shared Open WebUI chat interface,
+    # routed per model because Open WebUI lives in the llm-d-infra prerequisite,
+    # which owns no WorkspaceClass. Port 8000 (the pods' real port), not 80.
     - name: chat
       protocol: HTTP
       port: 8000
@@ -87,16 +60,19 @@ spec:
       description: "Optional bearer token clients must present to call the model"
       type: secret
       required: false
-    - helmValuePath: ms.modelArtifacts.uri
-      displayName: "Model URI"
-      description: "Hugging Face model URI, e.g. hf://Qwen/Qwen3-1.7B"
-      type: string
-      required: true
-    - helmValuePath: ms.modelArtifacts.name
+    - helmValuePath: model.name
       displayName: "Model Name"
-      description: "Served model name, e.g. Qwen/Qwen3-1.7B"
+      description: "Hugging Face model to serve, e.g. Qwen/Qwen3-1.7B. This is also the name clients pass in the OpenAI request body."
       type: string
       required: true
+    # Single-node / multi-node toggle. Divides the pod budget (replicas ×
+    # perReplica stays total demand); replicas must be a whole multiple of it.
+    - helmValuePath: modelServer.nodesPerReplica
+      displayName: "Nodes per Model Replica"
+      description: "How many pods together serve one copy of the model. 1 (default) means each pod is a whole model. Above 1 the model is sharded across that many nodes with tensor parallelism. `replicas` must be a whole multiple of this."
+      type: int
+      required: false
+      default: 1
   # vLLM/cuda images are large and the prerequisite installs a full stack.
   deployTimeout: 30m
   prerequisiteDeployTimeout: 20m

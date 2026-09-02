@@ -25,16 +25,27 @@ phase_deploy() {
   # otherwise leak via CI artifacts or archived runs).
   _redact_hf_token "$RUN_DIR/manifests/workspacedeployment.yaml"
 
-  # NOTE: no vLLM scrape object is created here — the llm-d-stack prerequisite
-  # (installed by the operator) / the llm-d-model chart ship their own
-  # ServiceMonitor/PodMonitor, which the KOF VM operator picks up.
-
   # Wait for the workspace to become ready. We accept either an Available or
   # Ready condition = True.
   wait_for "$TIMEOUT_WORKSPACE" "WorkspaceDeployment/$WORKSPACE_NAME ready" bash -c '
     KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$WORKSPACE_NAMESPACE"'" \
       get workspacedeployment "'"$WORKSPACE_NAME"'" \
       -o jsonpath="{.status.conditions[*].status}" 2>/dev/null | grep -q True'
+
+  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its
+  # router subchart only scrapes the endpoint-picker), so apply our own
+  # PodMonitor. This must come AFTER the workspace is ready: the operator creates
+  # the model's namespace (ws-<workspace>) asynchronously, so it does not exist
+  # right after the WorkspaceDeployment is applied. The KOF collectors'
+  # target-allocator discovers it and scrapes the model's vllm:* metrics into
+  # VictoriaMetrics (the collect phase gates on them).
+  if [[ "${DRY_RUN:-0}" != "1" ]]; then
+    wait_for 120 "namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
+      bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl get ns "'"$WORKSPACE_SERVICE_NAMESPACE"'"'
+  fi
+  render "$WORKFLOW_ROOT/templates/vllm-podmonitor.yaml.tmpl" \
+         "$RUN_DIR/manifests/vllm-podmonitor.yaml"
+  run kc apply -f "$RUN_DIR/manifests/vllm-podmonitor.yaml" 2>&1 | tee -a "$logf"
 
   kc -n "$WORKSPACE_NAMESPACE" get workspacedeployment "$WORKSPACE_NAME" -o yaml \
     > "$RUN_DIR/manifests/workspacedeployment.status.yaml" 2>/dev/null || true
