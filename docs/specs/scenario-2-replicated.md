@@ -2,7 +2,14 @@
 
 > **Inherits:** [Common Experiment Specification](common-experiment-setup.md).
 > Only the deltas relative to the common spec are stated here.
-> **Status:** Draft (design-only). Builds on the Scenario 1 reference implementation.
+> **Status:** Draft (design-only) — **not yet implemented** (T4). Builds on the Scenario 1 reference implementation.
+>
+> **As-built note (T3):** the stack + topology mapping changed during implementation — see the
+> [common spec Deviations](common-experiment-setup.md#deviations-from-the-original-design-as-built).
+> When S2 is implemented the deltas below become: workspace `llm-d-model-1-0-0` (not `llm-inference`);
+> two independent copies via `resources.replicas: 2`, `perReplica.gpuCount: 1`,
+> `modelServer.nodesPerReplica: 1` (not `decode.replicas`/`tensorParallelism`/`multinode`). The
+> tables below still show the original draft values and will be reconciled in T4.
 
 The **same** medium-sized LLM as S1, served by **two independent decode replicas** — one per
 node — behind the shared llm-d inference scheduler. Each replica holds a full copy of the model;
