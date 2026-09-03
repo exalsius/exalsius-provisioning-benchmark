@@ -25,24 +25,22 @@ phase_deploy() {
   # otherwise leak via CI artifacts or archived runs).
   _redact_hf_token "$RUN_DIR/manifests/workspacedeployment.yaml"
 
-  # Wait for the workspace to become ready. We accept either an Available or
-  # Ready condition = True.
-  wait_for "$TIMEOUT_WORKSPACE" "WorkspaceDeployment/$WORKSPACE_NAME ready" bash -c '
-    KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl -n "'"$WORKSPACE_NAMESPACE"'" \
-      get workspacedeployment "'"$WORKSPACE_NAME"'" \
-      -o jsonpath="{.status.conditions[*].status}" 2>/dev/null | grep -q True'
-
-  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its
-  # router subchart only scrapes the endpoint-picker), so apply our own
-  # PodMonitor. This must come AFTER the workspace is ready: the operator creates
-  # the model's namespace (ws-<workspace>) asynchronously, so it does not exist
-  # right after the WorkspaceDeployment is applied. The KOF collectors'
-  # target-allocator discovers it and scrapes the model's vllm:* metrics into
-  # VictoriaMetrics (the collect phase gates on them).
+  # Wait for the model's namespace to appear — the concrete signal that the operator has moved
+  # past the shared llm-d-infra prerequisite (auto-installed once per cluster, which takes several
+  # minutes) and applied THIS model's ServiceSet. We deliberately do NOT gate on a
+  # WorkspaceDeployment status condition: the CR can report Ready/Available=True while the prereq is
+  # still installing and ws-<workspace> does not yet exist. Use the full workspace budget — the
+  # prerequisite + model deploy can take ~20-30m (see the class prerequisiteDeployTimeout/deployTimeout).
+  # The execute phase then waits for the serving pod itself before sending traffic.
   if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    wait_for 120 "namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
+    wait_for "$TIMEOUT_WORKSPACE" "workspace namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
       bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl get ns "'"$WORKSPACE_SERVICE_NAMESPACE"'"'
   fi
+
+  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its router subchart only
+  # scrapes the endpoint-picker), so apply our own PodMonitor now that the namespace exists. The KOF
+  # collectors' target-allocator discovers it and scrapes the model's vllm:* metrics into
+  # VictoriaMetrics (the collect phase gates on them).
   render "$WORKFLOW_ROOT/templates/vllm-podmonitor.yaml.tmpl" \
          "$RUN_DIR/manifests/vllm-podmonitor.yaml"
   run kc apply -f "$RUN_DIR/manifests/vllm-podmonitor.yaml" 2>&1 | tee -a "$logf"
