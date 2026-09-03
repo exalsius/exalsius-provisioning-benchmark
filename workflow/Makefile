@@ -13,6 +13,10 @@ SCENARIO ?= s1
 RUN_FLAGS ?=
 # Run identifier (run directory name). Empty → prompted inside the container.
 RUN_ID ?=
+# Consecutive-run reproducibility check (docker-verify): number of back-to-back
+# runs, and the run-id base (run dirs are <base>-run-1 .. <base>-run-COUNT).
+COUNT ?= 2
+RUN_ID_BASE ?=
 # SSH key for the nodes: no default — prompted if unset.
 SSH_KEY_PATH ?=
 RUNS_DIR := $(CURDIR)/runs
@@ -54,6 +58,22 @@ s2: ## Run scenario 2 (replicated) in the container
 s3: ## Run scenario 3 (sharded) in the container
 	@$(MAKE) --no-print-directory docker-run SCENARIO=s3
 
+.PHONY: docker-verify
+docker-verify: build ## Run a scenario COUNT times back-to-back for reproducibility (COUNT=2; needs env: HF_TOKEN, NODE_ENDPOINTS, SSH_USERNAME)
+	@key="$(SSH_KEY_PATH)"; \
+	if [ -z "$$key" ]; then read -r -p "Path to the SSH private key for the nodes: " key; fi; \
+	key="$${key/#\~/$$HOME}"; \
+	[ -f "$$key" ] || { echo "SSH key not found: $$key"; exit 1; }; \
+	tty=; [ -t 0 ] && [ -t 1 ] && tty=-it; \
+	docker run --rm $$tty \
+	  --entrypoint /workflow/bin/run-repeat.sh \
+	  -e HF_TOKEN -e NODE_ENDPOINTS -e SSH_USERNAME -e RUN_ID_BASE="$(RUN_ID_BASE)" \
+	  -e SSH_KEY_PATH=/root/.ssh/id_rsa \
+	  -e MODEL_ID -e REPLICAS -e GPU_COUNT_PER_REPLICA -e NODES_PER_REPLICA -e WORKSPACE_CPU \
+	  -v "$$key":/root/.ssh/id_rsa:ro \
+	  -v $(RUNS_DIR):/workflow/runs \
+	  $(IMAGE) $(SCENARIO) $(COUNT) $(RUN_FLAGS)
+
 .PHONY: docker-cleanup
 docker-cleanup: build ## Tear down the cluster from a run (k0sctl reset) in the container
 	@key="$(SSH_KEY_PATH)"; \
@@ -68,5 +88,7 @@ docker-cleanup: build ## Tear down the cluster from a run (k0sctl reset) in the 
 	  $(IMAGE) $(SCENARIO) --only cleanup
 
 .PHONY: clean-artifacts
-clean-artifacts: ## Delete local run artifacts (runs/)
-	rm -rf runs/*
+clean-artifacts: ## Delete local run artifacts (runs/ — via a container, as runs are root-owned)
+	@rm -rf runs/* 2>/dev/null \
+	  || docker run --rm -v $(RUNS_DIR):/runs busybox sh -c 'rm -rf /runs/*' \
+	  || { echo "could not remove runs/ (root-owned) — try: sudo rm -rf runs/*"; exit 1; }
