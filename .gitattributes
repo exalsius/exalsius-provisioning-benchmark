@@ -1,0 +1,4 @@
+# Verification-run evidence is committed as per-scenario tarballs (sanitized run
+# artifacts). They are binary and can be sizeable, so track them with Git LFS.
+# Requires `git lfs install` in the clone before checkout/commit of these files.
+docs/evidence/*.tar.gz filter=lfs diff=lfs merge=lfs -text

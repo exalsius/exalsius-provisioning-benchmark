@@ -5,6 +5,10 @@ same phases: **bootstrap → prepare → deploy → execute → collect → clea
 end-to-end flow specified in [`../docs/specs/common-experiment-setup.md`](../docs/specs/common-experiment-setup.md)
 and is reused unchanged across Scenarios 1–3 (only per-scenario config differs).
 
+> **See also:** the repo overview + capability matrix ([`../README.md`](../README.md)) and the
+> per-scenario operator runbook ([`../docs/scenarios/scenario-1.md`](../docs/scenarios/scenario-1.md))
+> for prerequisites, expected outputs, result interpretation, troubleshooting, and reproduction.
+
 ## What it does
 
 One self-contained cluster per run (management == target). Observability is
@@ -69,6 +73,18 @@ make docker-run SCENARIO=s1 RUN_FLAGS="--to collect --keep"   # everything excep
 make docker-run SCENARIO=s1 RUN_FLAGS="--dry-run"             # preview the commands only
 make docker-cleanup SCENARIO=s1                               # tear the cluster down later
 ```
+
+Run a scenario **back-to-back for the reproducibility check** (each run cleans up, so the same node
+endpoints are reused; needs `HF_TOKEN`/`NODE_ENDPOINTS`/`SSH_USERNAME` preset — no prompts between runs):
+
+```bash
+make docker-verify SCENARIO=s1 COUNT=2                        # runs s1-run-1 then s1-run-2, aborts on any failure
+```
+
+Every run's artifacts under `runs/<scenario>/<run-id>/` are **sanitized in place** by the cleanup
+phase ([`lib/sanitize.sh`](lib/sanitize.sh)) — kubeconfig dropped; SSH user/key-path, node
+addresses/hostname, and any HF token redacted — so they are safe to share. Package the verified runs
+into a Git LFS evidence tarball with [`bin/package-evidence.sh`](bin/package-evidence.sh).
 
 ## Configuration
 
