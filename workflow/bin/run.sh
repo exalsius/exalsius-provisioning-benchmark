@@ -32,6 +32,8 @@ export WORKFLOW_ROOT="$(cd "$HERE/.." && pwd)"
 source "$WORKFLOW_ROOT/lib/common.sh"
 # shellcheck source=../lib/render.sh
 source "$WORKFLOW_ROOT/lib/render.sh"
+# shellcheck source=../lib/sanitize.sh
+source "$WORKFLOW_ROOT/lib/sanitize.sh"
 
 PHASES=(preflight bootstrap prepare deploy execute collect cleanup)
 

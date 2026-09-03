@@ -32,5 +32,15 @@ phase_cleanup() {
 
   # Drop the local kubeconfig so preflight of the next run starts clean.
   [[ "${DRY_RUN:-0}" == "1" ]] || rm -f "$KUBECONFIG_OUT"
+
+  # Sanitize the run artifacts IN PLACE, now that the cluster is gone and nothing
+  # else needs the real values (k0sctl.yaml was used for the reset just above).
+  # This scrubs SSH user/key-path, node public/private addresses + hostname, and
+  # any HF token across every recorded file (see lib/sanitize.sh). Runs on both a
+  # clean finish and the failure-path cleanup, so recorded runs are always safe to
+  # share. (Skipped for --keep, where cleanup does not run and the cluster stays up.)
+  if [[ "${DRY_RUN:-0}" != "1" ]] && declare -F sanitize_run_dir >/dev/null; then
+    sanitize_run_dir "$RUN_DIR" && info "run artifacts sanitized"
+  fi
   info "cleanup complete — nodes should be bare"
 }
