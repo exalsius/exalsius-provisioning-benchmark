@@ -53,9 +53,14 @@ phase_deploy() {
   # target-allocator discovers it and scrapes the model's vllm:* metrics into
   # VictoriaMetrics (the collect phase gates on them).
   if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    wait_for 120 "namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
+    wait_for "$TIMEOUT_WORKSPACE" "workspace namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
       bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl get ns "'"$WORKSPACE_SERVICE_NAMESPACE"'"'
   fi
+
+  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its router subchart only
+  # scrapes the endpoint-picker), so apply our own PodMonitor now that the namespace exists. The KOF
+  # collectors' target-allocator discovers it and scrapes the model's vllm:* metrics into
+  # VictoriaMetrics (the collect phase gates on them).
   render "$WORKFLOW_ROOT/templates/vllm-podmonitor.yaml.tmpl" \
          "$RUN_DIR/manifests/vllm-podmonitor.yaml"
   run kc apply -f "$RUN_DIR/manifests/vllm-podmonitor.yaml" 2>&1 | tee -a "$logf"
