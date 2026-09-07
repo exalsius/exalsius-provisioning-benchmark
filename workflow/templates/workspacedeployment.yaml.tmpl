@@ -49,3 +49,16 @@ spec:
       name: "${MODEL_ID}"
     modelServer:
       nodesPerReplica: ${NODES_PER_REPLICA}
+    # Endpoint-picker routing profile. Default payload-agnostic.yaml (least-busy)
+    # distributes load evenly across replicas so replicated throughput is
+    # reproducible; the chart default (default-plugins.yaml) weights prefix-cache
+    # affinity and concentrates load. Only affects multi-replica runs (S2).
+    # payload-agnostic.yaml uses the Alpha session-affinity-scorer, so the EPP
+    # needs --allow-experimental-plugins to start (harmless for other profiles —
+    # the flag only permits experimental plugins, it does not enable any).
+    igw:
+      router:
+        epp:
+          pluginsConfigFile: ${EPP_PLUGINS_CONFIG}
+          flags:
+            allow-experimental-plugins: true
