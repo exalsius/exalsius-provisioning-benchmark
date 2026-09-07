@@ -1,0 +1,141 @@
+# Values for the KOF umbrella chart (oci://ghcr.io/k0rdent/kof/charts/kof) for a
+# single self-contained benchmark cluster. One Helm release installs everything:
+#
+#   kof-operators              enabled  (VM operator, OTel operator, CRDs)
+#   victoria-metrics-operator  enabled
+#   kof-mothership             enabled  (management: Grafana + KCM templates)
+#   kof-storage                enabled  (local VictoriaMetrics; 1d retention)
+#   kof-collectors             enabled  (OpenTelemetry collectors)
+#   kof-regional               DISABLED (no separate regional cluster)
+#   kof-child                  DISABLED (no separate child cluster)
+#
+# promxy and vlogxy (cross-cluster query federation) are DISABLED — a single
+# cluster queries its local storage directly. Istio is not used. Storage is
+# ephemeral (short retention); the durable record is the collect-phase snapshot.
+global:
+  namespace: kof
+
+# --- operators ---------------------------------------------------------------
+kof-operators:
+  enabled: true
+  values:
+    grafana-operator:
+      enabled: true
+
+victoria-metrics-operator:
+  enabled: true
+
+# --- management plane (mothership) ------------------------------------------
+kof-mothership:
+  enabled: true
+  values:
+    cert-manager-service-template:
+      enabled: false
+    istio:
+      enabled: false
+    kcm:
+      installTemplates: true
+      kof:
+        operator:
+          crossNamespace: true
+    victoriametrics:
+      enabled: false          # storage is provided by kof-storage below
+    grafana:
+      enabled: true           # KOF Grafana (dashboards import here)
+      ingress:
+        enabled: false
+    promxy:
+      enabled: false
+    vlogxy:
+      enabled: false
+    dex:
+      enabled: false
+    sveltos:
+      grafanaDashboard: false
+
+# --- storage: local VictoriaMetrics (metrics/logs/traces), 1d retention ------
+kof-storage:
+  enabled: true
+  values:
+    istio:
+      enabled: false
+    promxy:
+      enabled: false
+    vlogxy:
+      enabled: false
+    external-dns:
+      enabled: false
+    dex:
+      enabled: false
+    cert-manager:
+      enabled: false
+    grafana:
+      enabled: false          # Grafana comes from the mothership
+    kof-dashboards:
+      enabled: false
+    victoria-metrics-operator:
+      enabled: false          # provided by the top-level victoria-metrics-operator
+    victoriametrics:
+      enabled: true
+      vmauth:
+        enabled: false          # not needed single-cluster; query vmselect directly
+      vmalert:
+        enabled: false          # no alerting in the benchmark
+      vmcluster:
+        enabled: true
+        spec:
+          retentionPeriod: "1d"   # VictoriaMetrics minimum is 1 day (1h crashes vmstorage)
+          replicationFactor: 1
+          vmselect: { replicaCount: 1 }
+          vminsert: { replicaCount: 1 }
+          vmstorage:
+            replicaCount: 1
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  resources:
+                    requests:
+                      storage: 10Gi
+    # VictoriaLogs disabled — the benchmark only needs metrics; drops the
+    # vlstorage/vlinsert/vlselect pods to save resources on the co-located node.
+    victoria-logs-cluster:
+      enabled: false
+    # VictoriaTraces disabled too — benchmark only needs metrics; frees the
+    # vtstorage/vtinsert/vtselect pods.
+    victoria-traces-cluster:
+      enabled: false
+
+# --- collectors: OpenTelemetry ----------------------------------------------
+kof-collectors:
+  enabled: true
+  values:
+    istio:
+      enabled: false
+    opencost:
+      enabled: false          # no cost accounting in the benchmark
+    kcm:
+      monitoring: true
+    opentelemetry-kube-stack:
+      clusterName: mothership
+      defaultCRConfig:
+        config:
+          processors:
+            resource/k8sclustername:
+              attributes:
+                - action: insert
+                  key: k8s.cluster.name
+                  value: mothership
+                - action: insert
+                  key: k8s.cluster.namespace
+                  value: kcm-system
+          exporters:
+            prometheusremotewrite:
+              external_labels:
+                cluster: mothership
+                clusterNamespace: kcm-system
+
+# --- disabled: single self-contained cluster --------------------------------
+kof-regional:
+  enabled: false
+kof-child:
+  enabled: false

@@ -1,0 +1,5 @@
+# Run artifacts (logs, kubeconfigs, metric snapshots) are not committed.
+runs/
+# Local secret overrides.
+*.local.env
+.env

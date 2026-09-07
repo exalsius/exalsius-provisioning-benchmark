@@ -1,0 +1,4 @@
+runs/
+*.local.env
+.env
+.git
