@@ -37,9 +37,9 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 
 Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
 runs on 2026-09-03 (baseline ~131 tok/s, TTFT p50 ~6.5 s), under
-[`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive functional
-runs (2026-09-07) — both load-balanced to both replicas — but aggregate **throughput did not
-reproduce** (~2.85× S1 vs ~1×; routing-dependent, recorded not gated — see the evidence).
+[`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
+(2026-09-07), load-balanced across both replicas, with **reproducible ~2.85× throughput scaling** over
+S1 under least-busy endpoint-picker routing (see the evidence).
 
 ## Quickstart
 
@@ -75,7 +75,7 @@ result interpretation, troubleshooting, and reproduction.
 
 Scenario 1 (T3) is the **reference implementation** — implemented, verified (two consecutive runs),
 and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
-readiness refinement so load waits for both replicas; it is implemented, documented, and verified by
-two consecutive functional-PASS runs (both load-balanced across both replicas — aggregate throughput
-is routing-dependent and did not reproduce, recorded not gated). Scenario 3 (T5) is not started. A
-published documentation page is a follow-up.
+readiness refinement so load waits for both replicas and a least-busy endpoint-picker routing
+default; it is implemented, documented, and verified by two consecutive PASS runs with reproducible
+~2.85× throughput scaling over S1. Scenario 3 (T5) is not started. A published documentation page is
+a follow-up.

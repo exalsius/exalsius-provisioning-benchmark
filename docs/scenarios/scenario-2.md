@@ -36,8 +36,10 @@ Topology is fixed by [`workflow/config/scenario-s2.env`](../../workflow/config/s
 | `NODES_PER_REPLICA` | 1 | each pod is a whole model → **2 independent copies**, TP=1 |
 
 Both pods are LeaderWorkerSet leaders; a topology-spread preference places one per node, and the
-router's endpoint-picker load-balances across them. Shared defaults (`WORKSPACE_CPU=2`,
-`GPU_VENDOR=NVIDIA`, …) are in `common.env`, same as S1.
+router's endpoint-picker load-balances across them using **least-busy** routing
+(`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow default) so load spreads evenly and
+throughput reproduces. Shared defaults (`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`, …) are in
+`common.env`, same as S1.
 
 ## 3. Execution steps
 
@@ -74,11 +76,11 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
   - **A2.3** both GPUs loaded — `DCGM_FI_DEV_FB_USED` non-zero for **both** `Hostname`s in `metrics/DCGM_FI_DEV_FB_USED.json`.
   - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~131 tok/s), expected to exceed it.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
-  replicas and passed every functional gate, but **aggregate throughput did not reproduce** — run-1
-  373 tok/s (~2.85× the S1 baseline, TTFT p50 289 ms), run-2 133 tok/s (~1× S1, TTFT p50 6.5 s). The
-  swing comes from the endpoint-picker's default prefix-cache-affinity routing (`payload-agnostic.yaml`,
-  least-busy, would even it out); performance is recorded, not gated. Full per-run data + explanation:
-  [`../evidence/scenario-2/`](../evidence/scenario-2/).
+  replicas and passed every functional gate, with **reproducible ~2.85× scaling** over the S1
+  baseline — run-1 369 tok/s, run-2 375 tok/s (within ~2%), TTFT p50 ~300 ms. This relies on
+  least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow
+  default); the chart's prefix-cache-affinity default concentrates load and does not reproduce.
+  Full per-run data: [`../evidence/scenario-2/`](../evidence/scenario-2/).
 
 ## 6. Known limitations
 
