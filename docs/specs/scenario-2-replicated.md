@@ -2,18 +2,12 @@
 
 > **Inherits:** [Common Experiment Specification](common-experiment-setup.md).
 > Only the deltas relative to the common spec are stated here.
-> **Status:** Draft (design-only) — **not yet implemented** (T4). Builds on the Scenario 1 reference implementation.
->
-> **As-built note (T3):** the stack + topology mapping changed during implementation — see the
-> [common spec Deviations](common-experiment-setup.md#deviations-from-the-original-design-as-built).
-> When S2 is implemented the deltas below become: workspace `llm-d-model-1-0-0` (not `llm-inference`);
-> two independent copies via `resources.replicas: 2`, `perReplica.gpuCount: 1`,
-> `modelServer.nodesPerReplica: 1` (not `decode.replicas`/`tensorParallelism`/`multinode`). The
-> tables below still show the original draft values and will be reconciled in T4.
+> **Status:** As-built — implementation ready (T4.1); live verification pending (T4.2). Builds on
+> the Scenario 1 reference implementation. Operator runbook: [`../scenarios/scenario-2.md`](../scenarios/scenario-2.md).
 
-The **same** medium-sized LLM as S1, served by **two independent decode replicas** — one per
-node — behind the shared llm-d inference scheduler. Each replica holds a full copy of the model;
-the scheduler load-balances requests across them. Demonstrates **horizontal scaling and
+The **same** medium-sized LLM as S1, served by **two independent model-server pods** — one per
+node — behind the shared llm-d router. Each pod holds a full copy of the model; the router's
+endpoint-picker load-balances requests across them. Demonstrates **horizontal scaling and
 availability** (not model sharding).
 
 ---
@@ -22,76 +16,80 @@ availability** (not model sharding).
 
 | Item | Value |
 |------|-------|
-| Nodes | **2** NVIDIA nodes, each with a single L40 (48 GB) GPU (each must fit a full model copy). |
-| Cluster | Two-node k0s cluster on the provided nodes (`bench-s2`); control plane co-located on one node. |
+| Nodes | **2** NVIDIA nodes (L40S 48 GB reference), each fitting a full model copy. |
+| Cluster | Two-node k0s cluster on the provided nodes (`bench-s2`); control plane co-located on the first node. |
 | Model | `MODEL_ID` (default `Qwen/Qwen3-8B`) — a full copy per node. |
 
 ## 2. Deployment configuration (delta)
 
 | Concept | `WorkspaceDeployment` field | Value |
 |---------|-----------------------------|-------|
-| Decode replicas | `spec.values.decode.replicas` | **2** (one per node) |
-| Tensor parallelism | `spec.values.tensorParallelism` | **1** (each replica on a single GPU) |
-| Multi-node | `spec.values.multinode` | `false` |
-| GPUs per replica | `spec.resources.perReplica.gpuCount` | **1** |
+| Replicas (pods) | `spec.resources.replicas` | **2** (one whole model per pod) |
+| GPUs per pod | `spec.resources.perReplica.gpuCount` | **1** |
+| Pods per model copy | `spec.values.modelServer.nodesPerReplica` | **1** |
+| ⇒ model copies | `replicas / nodesPerReplica` | **2** |
+| ⇒ tensor-parallel size | `nodesPerReplica × gpuCount` | **1** |
 
-**Deploy manifests (reference, open-source self-contained path — no `exls`):**
-
-Phases 1–2 are the common flow: `k0sctl` bootstraps a **two-node** k0s cluster on the provided
-nodes (one controller+worker, one worker), it is adopted as `ClusterDeployment/bench-s2`, and
-the GPU operator + monitoring are installed by direct `helm install` (the `llm-d-stack` prereq
-is handled by the operator). Phase 3 applies the WorkspaceDeployment below into that same cluster.
+Phases 1–2 are the common flow: `k0sctl` bootstraps a **two-node** k0s cluster (one
+controller+worker, one worker), adopted as `ClusterDeployment/bench-s2`; OpenEBS + GPU operator +
+KOF are installed by direct `helm install`; the workspace catalog (`llm-d-model-1-0-0` + its
+`llm-d-infra-1-0-0` prereq) is registered. Phase 3 applies the WorkspaceDeployment below.
 
 ```yaml
-# Phase 3 — deploy the llm-inference workspace with TWO decode replicas.
+# Phase 3 — deploy the llm-d-model workspace with TWO independent replicas.
 apiVersion: workspaces.exalsius.ai/v1
 kind: WorkspaceDeployment
 metadata:
   name: s2-replicated
   namespace: kcm-system
 spec:
-  workspaceClassRef: llm-inference
+  workspaceClassRef: llm-d-model-1-0-0
   clusterDeploymentRef:
     name: bench-s2
     namespace: kcm-system
   resources:
+    replicas: 2              # two pods; the topology-spread constraint places one per node
     perReplica:
+      cpu: "2"
       gpuCount: 1
+      gpuVendor: NVIDIA      # operator injects gpuResourceName (nvidia.com/gpu)
   values:
     huggingfaceToken: "${HF_TOKEN}"
-    modelName: "${MODEL_ID}"
-    decode:
-      replicas: 2        # one full model copy per node, load-balanced by the llm-d scheduler
+    model:
+      name: "${MODEL_ID}"
+    modelServer:
+      nodesPerReplica: 1     # each pod is a whole model (no sharding)
 ```
 
-The exact chart value key for the decode replica count is pinned by the T2 workflow (abstracted
-behind `DECODE_REPLICAS`).
+Both pods are LeaderWorkerSet leaders (each a group of size 1); the `spread` constraint prefers one
+per node. The router's `InferencePool` selects both, so the endpoint-picker balances across them.
 
 ## 3. Expected outcome
 
 - k0s comes up on both nodes and is adopted as `ClusterDeployment/bench-s2` (`Ready`); workspace `s2-replicated` ready.
-- **Two** vLLM decode pods, one scheduled per node, each loading a full model copy.
-- The llm-d scheduler distributes the load probe across both replicas.
-- Aggregate throughput is **expected to exceed the S1 baseline** (horizontal scaling); the actual
-  figure is recorded and reported, not gated.
+- **Two** serving pods, one per node, each loading a full model copy.
+- The endpoint-picker distributes the aiperf load across both replicas.
+- Aggregate throughput is **expected to exceed the S1 baseline** (horizontal scaling); the figure is
+  recorded and reported, not gated.
 
 ## 4. Required metrics (delta)
 
-Common baseline **plus** scenario-specific:
+Common baseline (§6 of the common spec) **plus** scenario-specific — all from the same series, read
+per pod/node from the metric snapshots:
 
 | Metric | Purpose |
 |--------|---------|
-| Per-replica request counts (`vllm:num_requests_running` grouped by pod) | Verify the scheduler **balances** load across both replicas. |
-| Per-node GPU utilisation & memory (`DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED` by node) | Both GPUs active; each holds a full model copy. |
+| Per-replica request counts (`vllm:num_requests_running` by pod) | Verify the endpoint-picker **balances** load across both replicas. |
+| Per-node GPU footprint (`DCGM_FI_DEV_FB_USED` by `Hostname`) | Both GPUs active; each holds a full model copy. |
 | Aggregate vs. per-replica throughput (`vllm:generation_tokens_total` summed vs. by pod) | Quantify scaling relative to S1. |
 
 ## 5. Acceptance criteria (delta)
 
-Common criteria **plus**:
+Common criteria (§7) **plus**:
 
-- **A2.1** Exactly **two** vLLM decode replicas running, one per node.
-- **A2.2** Both replicas receive traffic under load — neither replica's request share is 0%
-  during the load probe (scheduler load-balancing verified).
+- **A2.1** Exactly **two** serving model-server pods running (LWS leaders), one per node.
+- **A2.2** Both replicas receive traffic under load — neither pod's request share is 0% during the
+  aiperf probe (endpoint-picker load-balancing verified).
 - **A2.3** Both GPUs report non-zero `DCGM_FI_DEV_FB_USED` (a full model copy on each node).
 - **A2.4** Aggregate and per-replica throughput are recorded and compared to the S1 baseline
   (expected to exceed it). Reported, not gated.
@@ -102,15 +100,15 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 
 | Phase | Expected |
 |-------|----------|
-| Bootstrap + prepare cluster (Phases 1–2, 2 nodes: k0s + adopt + GPU/monitoring addons) | ~25 min |
-| Workspace ready (2 replicas, parallel model pull) | ~20 min |
-| Full run (Phase 0→6) | ~60 min |
+| Bootstrap + prepare cluster (Phases 1–2, 2 nodes) | ~25 min |
+| Workspace ready (2 replicas, parallel model pull) | ~15 min |
+| Full run (Phase 0→6) | ~55–65 min |
 
 ## 7. Known limitations
 
 - Each replica must independently fit the full model — replication does **not** enable larger
   models (that is Scenario 3's sharding).
-- Scaling is sub-linear due to scheduler overhead and shared ingress; the observed speed-up over
-  S1 depends on load and is reported descriptively.
-- Aggregate throughput depends on the load generator sustaining enough concurrency to keep both
-  replicas busy; `CONCURRENCY` must exceed single-replica saturation.
+- Placement is a *preference* (`ScheduleAnyway` topology spread), not a guarantee; with one GPU per
+  node the per-pod GPU request effectively forces one pod per node anyway.
+- Scaling is sub-linear (shared gateway/endpoint-picker); the speed-up over S1 depends on load and
+  is reported descriptively. The load must sustain enough concurrency to keep both replicas busy.
