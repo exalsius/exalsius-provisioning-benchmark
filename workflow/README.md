@@ -6,8 +6,9 @@ end-to-end flow specified in [`../docs/specs/common-experiment-setup.md`](../doc
 and is reused unchanged across Scenarios 1–3 (only per-scenario config differs).
 
 > **See also:** the repo overview + capability matrix ([`../README.md`](../README.md)) and the
-> per-scenario operator runbook ([`../docs/scenarios/scenario-1.md`](../docs/scenarios/scenario-1.md))
-> for prerequisites, expected outputs, result interpretation, troubleshooting, and reproduction.
+> per-scenario operator runbooks ([scenario-1](../docs/scenarios/scenario-1.md),
+> [scenario-2](../docs/scenarios/scenario-2.md)) for prerequisites, expected outputs, result
+> interpretation, troubleshooting, and reproduction.
 
 ## What it does
 

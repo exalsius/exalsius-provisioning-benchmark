@@ -32,12 +32,14 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 | Scenario | Implemented | Verified (2 clean runs) | Docs | Telemetry | Spec |
 |----------|:-----------:|:-----------------------:|:----:|:---------:|:----:|
 | **S1 single-node** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-1/)) | ✅ [runbook](docs/scenarios/scenario-1.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-1-single-node.md) |
-| **S2 replicated** | ⬜ (T4) | ⬜ | ⬜ | ⬜ | 🟡 [draft](docs/specs/scenario-2-replicated.md) |
+| **S2 replicated** | ✅ | ✅ 2/2 PASS¹ ([evidence](docs/evidence/scenario-2/)) | ✅ [runbook](docs/scenarios/scenario-2.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-2-replicated.md) |
 | **S3 sharded** | ⬜ (T5) | ⬜ | ⬜ | ⬜ | 🟡 [draft](docs/specs/scenario-3-sharded.md) |
 
-Legend: ✅ done · 🟡 draft · ⬜ not started. S1 is verified by two consecutive clean-state runs on
-2026-09-03 (baseline ~131 tok/s, TTFT p50 ~6.5 s), recorded under
-[`docs/evidence/scenario-1/`](docs/evidence/scenario-1/).
+Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
+runs on 2026-09-03 (baseline ~131 tok/s, TTFT p50 ~6.5 s), under
+[`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive functional
+runs (2026-09-07) — both load-balanced to both replicas — but aggregate **throughput did not
+reproduce** (~2.85× S1 vs ~1×; routing-dependent, recorded not gated — see the evidence).
 
 ## Quickstart
 
@@ -66,11 +68,14 @@ result interpretation, troubleshooting, and reproduction.
 |------|------|
 | [`workflow/`](workflow/) | The reusable containerised end-to-end workflow (phase scripts, config, templates, Dockerfile, Makefile). See [`workflow/README.md`](workflow/README.md). |
 | [`docs/specs/`](docs/specs/) | Experiment specifications — the [common setup](docs/specs/common-experiment-setup.md) + per-scenario specs (as-built for S1). |
-| [`docs/scenarios/`](docs/scenarios/) | Operator runbooks — [Scenario 1](docs/scenarios/scenario-1.md). |
+| [`docs/scenarios/`](docs/scenarios/) | Operator runbooks — [Scenario 1](docs/scenarios/scenario-1.md), [Scenario 2](docs/scenarios/scenario-2.md). |
 | [`docs/evidence/`](docs/evidence/) | Committed verification evidence (sanitized run artifacts, Git LFS). |
 
 ## Status
 
 Scenario 1 (T3) is the **reference implementation** — implemented, verified (two consecutive runs),
-and documented. Scenarios 2 and 3 (T4/T5) reuse this workflow unchanged, differing only in
-per-scenario config. A published documentation page is a follow-up.
+and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
+readiness refinement so load waits for both replicas; it is implemented, documented, and verified by
+two consecutive functional-PASS runs (both load-balanced across both replicas — aggregate throughput
+is routing-dependent and did not reproduce, recorded not gated). Scenario 3 (T5) is not started. A
+published documentation page is a follow-up.
