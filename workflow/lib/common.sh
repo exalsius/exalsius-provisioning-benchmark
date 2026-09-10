@@ -191,6 +191,45 @@ resolve_ssh_key() {
   info "using SSH key: $SSH_KEY_PATH"
 }
 
+# --- VictoriaMetrics (KOF) query helpers -------------------------------------
+# Port-forward the vmselect Service and query VictoriaMetrics's PromQL instant-
+# query API. Shared by the collect phase (required-series snapshot) and the
+# execute phase (gating on EPP endpoint discovery before load — see
+# 40-execute.sh). Honors DRY_RUN (no-op).
+
+VM_LOCAL_PORT="${VM_LOCAL_PORT:-18428}"
+
+# vm_query_start <logfile> — start the background port-forward; sets
+# VM_QUERY_BASE. Caller must eventually call vm_query_stop (e.g. via a RETURN
+# trap in the calling function, matching the rest of this codebase's pattern).
+vm_query_start() {
+  local logf="$1"
+  export VM_QUERY_BASE="http://127.0.0.1:${VM_LOCAL_PORT}"
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  kubectl -n "$KOF_NAMESPACE" port-forward "svc/$VM_QUERY_SERVICE" "${VM_LOCAL_PORT}:${VM_QUERY_PORT}" \
+    >>"$logf" 2>&1 &
+  VM_QUERY_PF_PID=$!
+  wait_for 60 "VictoriaMetrics query API up" bash -c "curl -sf ${VM_QUERY_BASE}/health -o /dev/null" || \
+    warn "VictoriaMetrics not reachable; queries may return empty"
+}
+
+vm_query_stop() { [[ -n "${VM_QUERY_PF_PID:-}" ]] && kill "$VM_QUERY_PF_PID" 2>/dev/null; VM_QUERY_PF_PID=""; }
+
+# vm_query_json <promql> — print the raw VictoriaMetrics instant-query JSON
+# response body for <promql> (empty on error or DRY_RUN).
+vm_query_json() {
+  local q="$1"
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  curl -sf --data-urlencode "query=$q" "${VM_QUERY_BASE}${VM_QUERY_PATH}" 2>/dev/null || true
+}
+
+# vm_query_scalar <promql> — the first result's numeric value, or empty if the
+# query returned no series / errored.
+vm_query_scalar() {
+  local resp; resp="$(vm_query_json "$1")"
+  [[ -n "$resp" ]] && jq -r '.data.result[0].value[1] // empty' <<<"$resp" 2>/dev/null
+}
+
 # Split comma-separated NODE_ENDPOINTS into an array of ip:port.
 node_endpoints_array() {
   local IFS=','; read -r -a _EP <<< "${NODE_ENDPOINTS:?NODE_ENDPOINTS not set}"

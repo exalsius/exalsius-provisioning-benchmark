@@ -27,16 +27,18 @@ phase_execute() {
 
   _wait_endpoint_ready "$logf"     # gateway + workspace backend must be serving first
   _functional_probe "$ns" "$svc_url" "$logf"
+  _snapshot_pre_load_counters "$logf"
   _aiperf_load "$ns" "$logf"
   info "execution complete"
 }
 
-# Gate the probe on real readiness: the gateway must be up AND every serving pod
-# must be Ready before we send traffic. In workspace-hub 1.0.0 the workload is a
-# LeaderWorkerSet; only the leader (worker-index 0) runs the API server, so the
-# serving pods are the leaders. We wait for ALL of them — model copies =
-# REPLICAS / NODES_PER_REPLICA (S1:1, S2:2, S3:1) — so a replicated run only
-# starts load once both replicas can receive it (scenario-2 A2.2).
+# Gate the probe on real readiness: the gateway must be up, every serving pod
+# must be Ready, AND the endpoint-picker must have actually discovered every
+# replica through the InferencePool before we send traffic. In workspace-hub
+# 1.0.0 the workload is a LeaderWorkerSet; only the leader (worker-index 0) runs
+# the API server, so the serving pods are the leaders. We wait for ALL of them —
+# model copies = REPLICAS / NODES_PER_REPLICA (S1:1, S2:2, S3:1) — so a
+# replicated run only starts load once every replica can receive it (A2.2).
 _wait_endpoint_ready() {
   local logf="$1"
   local expected=$(( ${REPLICAS:-1} / ${NODES_PER_REPLICA:-1} ))
@@ -46,6 +48,50 @@ _wait_endpoint_ready() {
   wait_for "${TIMEOUT_WORKSPACE:-1500}" "${expected} model-server leader(s) Ready in ${WORKSPACE_SERVICE_NAMESPACE}" \
     bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" c=$(kubectl -n "'"$WORKSPACE_SERVICE_NAMESPACE"'" get pod -l llm-d.ai/inference-serving=true,leaderworkerset.sigs.k8s.io/worker-index=0 -o jsonpath="{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\n\"}{end}" 2>/dev/null | grep -cx True); [ "${c:-0}" -ge '"$expected"' ]'
   info "gateway up + ${expected} model-server leader(s) serving"
+  _wait_epp_pool_ready "$expected" "$logf"
+}
+
+# Pod Ready does not mean the EPP has discovered the pod through the
+# InferencePool yet — the EPP watches Pods by label selector on its own
+# reconcile loop, and InferencePool's status only tracks Gateway-attachment
+# conditions (Accepted/ResolvedRefs), never endpoint discovery. Without this
+# gate, aiperf could start while the EPP's routing table still only has one
+# replica, silently concentrating all load on it (the failure this PR's own
+# routing-profile investigation hit). Gate on the EPP's own
+# inference_pool_ready_pods gauge instead — scraped by the router subchart's
+# own ServiceMonitor into the same VictoriaMetrics the collect phase queries.
+_wait_epp_pool_ready() {
+  local expected="$1" logf="$2"
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  vm_query_start "$logf"
+  # shellcheck disable=SC2064
+  trap "vm_query_stop" RETURN
+  local timeout="${EPP_READY_CHECK_TIMEOUT:-180}"
+  local deadline=$(( $(date +%s) + timeout )) val
+  log "waiting (≤${timeout}s) for the EPP to discover ${expected} backend endpoint(s) (inference_pool_ready_pods)"
+  while :; do
+    val="$(vm_query_scalar 'sum(inference_pool_ready_pods)')"
+    if [[ -n "$val" ]] && awk -v v="$val" -v e="$expected" 'BEGIN{exit !(v>=e)}'; then
+      info "EPP reports ${val} ready pool endpoint(s)"
+      return 0
+    fi
+    (( $(date +%s) < deadline )) || \
+      die "EPP never reported ${expected} ready pool endpoint(s) within ${timeout}s (inference_pool_ready_pods last read: ${val:-none}) — refusing to start aiperf before the endpoint-picker can route to every replica"
+    sleep 5
+  done
+}
+
+# Snapshot vllm:generation_tokens_total per pod right before aiperf launches, so
+# the collect phase can require a positive DELTA over the load window (A2.2)
+# rather than trusting the post-run cumulative value, which the functional
+# probe just above already perturbed on whichever replica the gateway routed it
+# to. Consumed by 50-collect.sh's _check_replica_traffic.
+_snapshot_pre_load_counters() {
+  local logf="$1" out="$RUN_DIR/metrics/_pre_load_vllm_generation_tokens_total.json"
+  [[ "${DRY_RUN:-0}" == "1" ]] && { : > "$out"; return 0; }
+  vm_query_start "$logf"
+  vm_query_json 'vllm:generation_tokens_total' > "$out" 2>/dev/null || true
+  vm_query_stop
 }
 
 # Gate: a deterministic request via an ephemeral in-cluster curl pod, RETRIED
