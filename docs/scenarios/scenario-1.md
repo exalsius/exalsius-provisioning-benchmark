@@ -150,6 +150,12 @@ series from the workflow-applied `PodMonitor`.
 
 ## 6. Known limitations
 
+- **Reset, not reboot:** cleanup destroys the k0s cluster (`k0sctl reset`) but does not reboot the
+  node. Per [k0s's own docs](https://docs.k0sproject.io/stable/reset) and
+  [NVIDIA's GPU Operator uninstall guidance](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/26.7/uninstall.html),
+  a reset alone does not guarantee a literal bare-metal state — k0s state or loaded driver modules
+  can persist without a reboot. Reproducibility here means two consecutive passing runs on a
+  freshly-reset k0s cluster on the same prepared host, not on a rebooted/bare node.
 - **No redundancy / no scaling:** a single pod on one GPU (contrast S2/S3).
 - **Control-plane co-location:** the control plane shares the one node with the model, so CPU is
   tight and requests are kept low (see §2.1 sizing rationale).
@@ -178,9 +184,11 @@ More knobs and rationale are documented inline in
 
 ## 8. Reproduction
 
-Reproducibility (spec §7.5) = **two consecutive clean runs** from bare nodes, using only the
-committed workflow + docs. Each run fully cleans up (`k0sctl reset`), so the **same node endpoints
-are reused** across runs. One command runs the whole sequence and aborts if any run fails:
+Reproducibility (spec §7.5) = **two consecutive clean runs** on a freshly-prepared host, using only
+the committed workflow + docs. Each run fully tears down its k0s cluster (`k0sctl reset`), so the
+**same node endpoints are reused** across runs on a fresh cluster each time — this does not reboot
+the node or guarantee a literal bare-metal state (see [§6 Known limitations](#6-known-limitations)).
+One command runs the whole sequence and aborts if any run fails:
 
 ```bash
 cd workflow
@@ -191,8 +199,8 @@ make docker-verify SCENARIO=s1 COUNT=2 SSH_KEY_PATH=~/.ssh/bench           # run
 
 `docker-verify` calls [`bin/run-repeat.sh`](../../workflow/bin/run-repeat.sh), which runs the
 scenario `COUNT` times back-to-back (`s1-run-1`, `s1-run-2`, …). Equivalent manual form:
-`make s1 RUN_ID=s1-run-1` then `make s1 RUN_ID=s1-run-2`. Each run must pass §4's criteria and leave
-the node bare.
+`make s1 RUN_ID=s1-run-1` then `make s1 RUN_ID=s1-run-2`. Each run must pass §4's criteria and tear
+down its k0s cluster on the node.
 
 **Sanitization is automatic.** At the end of each run's cleanup phase the workflow scrubs its
 artifacts **in place** ([`workflow/lib/sanitize.sh`](../../workflow/lib/sanitize.sh)): it drops the

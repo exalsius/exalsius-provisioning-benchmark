@@ -5,10 +5,13 @@
 #   run-repeat.sh <scenario> <count> [extra run.sh flags...]
 #
 # Each iteration is a full preflight -> cleanup cycle with a distinct run id
-# (<base>-run-<i>, base = RUN_ID_BASE or the scenario). Cleanup returns the nodes
-# to bare, so the SAME NODE_ENDPOINTS are reused across iterations. Aborts the
-# moment any run fails (a passing sequence means every run passed from a clean
-# state). Each run's artifacts are sanitized in place by the cleanup phase.
+# (<base>-run-<i>, base = RUN_ID_BASE or the scenario). Cleanup destroys the k0s
+# cluster (`k0sctl reset`) so each iteration gets a fresh cluster on the SAME
+# NODE_ENDPOINTS — this does not reboot the node or guarantee a literal
+# bare-metal state (k0s/NVIDIA driver remnants can persist across a reset
+# without a reboot). Aborts the moment any run fails (a passing sequence means
+# every run passed on a freshly-reset cluster on the same prepared host). Each
+# run's artifacts are sanitized in place by the cleanup phase.
 #
 # Inputs must be preset in the environment (there is no TTY to prompt between
 # runs): NODE_ENDPOINTS, SSH_USERNAME, SSH_KEY_PATH, HF_TOKEN. The Makefile's
