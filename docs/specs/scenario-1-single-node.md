@@ -64,7 +64,12 @@ spec:
 ```bash
 # Applied by the T2 workflow (Phase 3):
 kubectl apply -f workspacedeployment-s1.yaml
-kubectl wait --for=condition=Available workspacedeployment/s1-single-node -n kcm-system --timeout=30m
+# Gate on the model's workspace namespace appearing (ws-s1-single-node), not on the
+# WorkspaceDeployment's own Available/Ready condition: that condition can report True
+# while the shared llm-d-infra prerequisite (installed once per cluster) is still in
+# progress, before the model's ServiceSet has been applied. The workflow polls (10s
+# interval, full workspace timeout budget ~30m) rather than using `kubectl wait`:
+until kubectl get namespace ws-s1-single-node >/dev/null 2>&1; do sleep 10; done
 ```
 
 ## 3. Expected outcome

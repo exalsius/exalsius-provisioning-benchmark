@@ -197,16 +197,18 @@ the **one** benchmark cluster (mgmt == target), sharing one artifact directory
 | **0. Preflight** | Validate inputs + host: tooling present, SSH reachability + passwordless sudo to every node, node count, low-level PCI GPU probe, no prior cluster of this name. | `ssh … true`; PCI probe | `preflight.log` |
 | **1. Bootstrap cluster** | Template `k0sctl.yaml` from the node list, tune node limits, bring up k0s on the provided SSH nodes; export the kubeconfig. | `k0sctl apply`; `k0sctl kubeconfig` | benchmark kubeconfig, `bootstrap.log` |
 | **2. Prepare cluster** | `helm install` **OpenEBS** (default StorageClass), Gateway API CRDs, the **NVIDIA GPU operator**, **k0rdent/KCM** (+ provider trim), **KOF** (VictoriaMetrics + OTel collectors), and the **`exalsius-operator`**; **adopt** the cluster (→ `ClusterDeployment`); register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). Wait until GPUs are schedulable. | `helm upgrade --install …`; `kubectl apply`; `kubectl wait` | `prepare.log` |
-| **3. Deploy workspace** | Render + apply the scenario `WorkspaceDeployment`; wait until ready; apply the vLLM `PodMonitor`; discover the endpoint. | `kubectl apply`; `kubectl wait` | `endpoint.env`, `deploy.log` |
+| **3. Deploy workspace** | Render + apply the scenario `WorkspaceDeployment`; wait for the model's workspace namespace to appear; apply the vLLM `PodMonitor`; discover the endpoint. | `kubectl apply`; `kubectl get ns` (polled) | `endpoint.env`, `deploy.log` |
 | **4. Execute** | Functional probe (in-cluster curl to the gateway with the model header), then the standard inference load via an **aiperf** Job in-cluster. | curl pod; aiperf Job | `results/functional.json`, `results/aiperf.json`, `load.log` |
-| **5. Collect** | Snapshot the required telemetry from **VictoriaMetrics** (`vmselect`), gather logs, write the run report. Fails if any required series is missing. | VM query API; `kubectl logs` | `metrics/*.json`, `run-report.md` |
+| **5. Collect** | Snapshot the required telemetry from **VictoriaMetrics** (`vmselect`), gather logs, write the run report. Fails if any required series is missing, or if the `WorkspaceDeployment`'s Ready/Available condition never reads `True`. | VM query API; `kubectl logs`; `kubectl get workspacedeployment` (polled) | `metrics/*.json`, `run-report.md` |
 | **6. Cleanup** | Delete the WorkspaceDeployment + ClusterDeployment, then **destroy the whole cluster** (`k0sctl reset`) so the nodes return to a clean state. | `kubectl delete`; `k0sctl reset` | `cleanup.log` |
 
 **Idempotency & clean state:** phase 0 fails fast if a cluster of the same name already exists;
 phase 6 (`k0sctl reset`, operating only on this run's `k0sctl.yaml`) is safe to run repeatedly and
-must leave **nothing benchmark-created on the nodes**. Reproducibility (T3.2/T4.2/T5.2) requires
-**two consecutive clean runs** from an empty starting state (bare nodes → full run → bare nodes,
-twice).
+must leave **nothing benchmark-created on the nodes**. Note that `k0sctl reset` does not reboot the
+node, so it does not guarantee a literal bare-metal state (k0s state or NVIDIA driver modules can
+persist across a reset without a reboot — see k0s's and NVIDIA's own uninstall/reset guidance).
+Reproducibility (T3.2/T4.2/T5.2) requires **two consecutive clean runs** on the same prepared host
+(fresh k0s cluster → full run → cluster torn down, twice), not on a rebooted/bare node.
 
 ### 4.1 Standard inference workload
 
@@ -278,8 +280,15 @@ serves, and is observable — not on hitting performance targets. Performance fi
 **passes** iff all of the following hold (scenario specs add functional criteria of their own):
 
 1. **Provisioning.** `k0sctl` brings up k0s on the SSH nodes; the cluster is adopted
-   (`ClusterDeployment` `Ready`) with GPUs schedulable; the `WorkspaceDeployment` reaches ready —
-   evidenced by logs.
+   (`ClusterDeployment` `Ready`) with GPUs schedulable; the model's workspace namespace appears —
+   evidence that the `WorkspaceDeployment` has moved past the shared `llm-d-infra` prerequisite and
+   applied the model's `ServiceSet`. Deploy-phase **sequencing** waits on this namespace signal
+   rather than the `WorkspaceDeployment`'s own `Available`/`Ready` condition, because that condition
+   can report `True` while the shared prerequisite is still installing — gating sequencing on it
+   would let a run proceed before the model's `ServiceSet` even exists. The condition is still a
+   hard pass/fail requirement, just checked later: the collect phase polls it (bounded, once the
+   model has already been proven serving per criterion 2) and **fails the run** if it never reads
+   `True`, recording the observed status in `run-report.md`.
 2. **Functionality.** The OpenAI-compatible endpoint returns a valid, non-empty completion for
    the functional probe prompt (HTTP 200, coherent text, expected model id).
 3. **Serving stability.** The aiperf load probe completes with a **0% error rate**. Its throughput

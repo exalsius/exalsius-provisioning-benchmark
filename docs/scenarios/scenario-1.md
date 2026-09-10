@@ -112,6 +112,9 @@ A passing run shows, in `phases.tsv`, every phase `ok`, and in `run-report.md`:
 - **Functional probe:** `pass` (a non-empty completion for `Qwen/Qwen3-8B`).
 - **aiperf load export captured:** yes, **0 request errors**.
 - **Required metric series missing: 0.**
+- **WorkspaceDeployment Ready/Available condition:** `True` (gated — checked in the collect phase,
+  once the model is already proven serving, rather than during deploy-phase sequencing; see
+  [common spec §7.1](../specs/common-experiment-setup.md#7-acceptance-criteria-common)).
 - **Recorded performance** (reported, not gated): output-token throughput, request throughput,
   TTFT (p50/p90), request latency (p50/p90), inter-token latency, output sequence length.
 
@@ -129,7 +132,8 @@ series from the workflow-applied `PodMonitor`.
 ## 5. Result interpretation
 
 - **Functional acceptance** (gated): all phases `ok`, functional probe `pass`, aiperf 0 errors,
-  0 missing metric series, cleanup leaves the node bare.
+  0 missing metric series, `WorkspaceDeployment` Ready/Available `True`, cleanup tears down the k0s
+  cluster on the node.
 - **Scenario-1 acceptance** (spec §5): **A1.1** exactly one serving pod
   (`kubectl -n ws-s1-single-node get pod -l llm-d.ai/inference-serving=true`); **A1.2**
   `DCGM_FI_DEV_FB_USED` non-zero on exactly one GPU (verified: **43634 MiB** on one NVIDIA L40S — the
@@ -157,6 +161,7 @@ series from the workflow-applied `PodMonitor`.
 | vLLM pod CrashLoop, "Failed to infer device type" / no CUDA | pod got **no GPU** — `gpuVendor`/`gpuNodeSelector` missing so the operator injected no `gpuResourceName` | ensure the WorkspaceDeployment sets `resources.perReplica.gpuVendor: NVIDIA` (default via `GPU_VENDOR`); verify `kubectl -n ws-s1-single-node get pod … -o jsonpath` shows `nvidia.com/gpu` |
 | vLLM starts but CUDA init fails | NVIDIA driver **< 580** (image is CUDA 13) | upgrade the node driver, or pin the GPU operator to a ≥580 driver branch |
 | Collect phase dies "required metric series missing" incl. `vllm:*` | vLLM `PodMonitor` not scraped | confirm the PodMonitor exists in `ws-s1-single-node` and KOF's target-allocator is watching PodMonitors |
+| Collect phase dies "WorkspaceDeployment Ready/Available condition never read True" | the CR's own status disagrees with the (already-verified) serving model — an operator-side reconcile issue | inspect `results/workspace-describe.txt` and `kubectl -n kcm-system describe workspacedeployment s1-single-node`; raise `WORKSPACE_READY_CHECK_TIMEOUT` (default 60s) only if this is consistently a slow-converge race, not a real fault |
 | `kcm-flux-check` BackoffLimitExceeded | k0s **< 1.32** | use the pinned `K0S_VERSION` (≥ 1.32) in `common.env` |
 | PVCs Pending / KOF not ready | no default StorageClass | OpenEBS install failed — check `prepare.log`; `openebs-hostpath` must be the default |
 | Gateway returns "route not found" on the probe | missing model header | requests must carry `X-Gateway-Model-Name: <model>` (the workflow sets this) |
