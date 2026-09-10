@@ -9,9 +9,15 @@ live in a Git LFS tarball alongside this file:
 > **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-07, both meeting the
 > functional acceptance criteria (T4.2): valid completion, aiperf 0 errors, all required metric
 > series present, both replicas served, both GPUs loaded, clean teardown. run-2 started 1 s after
-> run-1's cleanup, from the now-bare nodes — consecutive from a clean state. Aggregate throughput
-> **reproduced** (~2.85× the S1 baseline, within ~2% run-to-run) under least-busy endpoint-picker
-> routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`).
+> run-1's cleanup tore down the k0s cluster on both nodes — consecutive from a fresh cluster, not a
+> rebooted/bare node (see [Scenario 1 §6](../../scenarios/scenario-1.md#6-known-limitations)).
+> Aggregate throughput **reproduced** (~2.85× the S1 baseline, within ~2% run-to-run) under
+> least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`).
+>
+> **Note:** the EPP-endpoint-discovery wait and the per-pod delta-based A2.2 check (added in
+> response to review feedback) postdate these runs. The A2.2 figures below are the raw post-run
+> cumulative counters, not the delta the current code gates on — both values are large enough to
+> rule out probe-only pollution, but these runs haven't been re-verified against the new gates.
 
 Contents, sanitization, and per-run layout are as for Scenario 1 — see
 [`../scenario-1/README.md`](../scenario-1/README.md). Runs execute on **two** Nebius L40S VMs (one
@@ -36,9 +42,9 @@ Update to the merged commit SHA when the branch is pushed.
 | aiperf load — 0 request errors (`error_summary: []`) | ✅ | ✅ |
 | Required metric series present (0 missing) | ✅ | ✅ |
 | **A2.1** two serving pods, one per node | ✅ | ✅ |
-| **A2.2** both replicas received traffic (`generation_tokens_total` per pod) | ✅ 7549 / 9052 | ✅ 8740 / 6061 |
+| **A2.2** both replicas received traffic (raw cumulative `generation_tokens_total` per pod — see note above) | ✅ 7549 / 9052 | ✅ 8740 / 6061 |
 | **A2.3** both GPUs loaded (`DCGM_FI_DEV_FB_USED`, MiB) | ✅ 43634 / 43634 | ✅ 43634 / 43634 |
-| Cleanup — `k0sctl reset`, nodes left bare | ✅ | ✅ |
+| Cleanup — `k0sctl reset` tears down the k0s cluster | ✅ | ✅ |
 
 ## Recorded performance (reported, not gated)
 

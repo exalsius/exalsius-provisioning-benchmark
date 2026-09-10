@@ -15,7 +15,7 @@ containerised workflow as Scenario 1, changed only by `config/scenario-s2.env`.
 ## 1. Prerequisites
 
 Same as [Scenario 1 §1](scenario-1.md#1-prerequisites) except **two** GPU nodes are required
-(each an L40S-class 48 GB VM, driver ≥ 580 — see [Scenario 1 §2.1](scenario-1.md#21-reference-test-environment-known-good)). `NODE_ENDPOINTS` lists both, comma-separated:
+(each an L40S-class 48 GB VM, no pre-installed NVIDIA driver needed — see [Scenario 1 §2.1](scenario-1.md#21-reference-test-environment-known-good)). `NODE_ENDPOINTS` lists both, comma-separated:
 
 ```
 NODE_ENDPOINTS="10.0.0.26:22,10.0.0.27:22"
@@ -57,8 +57,10 @@ make docker-run SCENARIO=s2 RUN_ID=s2-run-1 SSH_KEY_PATH=~/.ssh/bench
 ```
 
 Phases and `RUN_FLAGS` variants are identical to [Scenario 1 §3](scenario-1.md#3-execution-steps).
-Before sending load, the execute phase now waits for **both** serving leaders to be Ready (not just
-one), so the aiperf run exercises both replicas.
+Before sending load, the execute phase waits for **both** serving leaders to be Ready (not just
+one), then additionally waits for the endpoint-picker to report both as discovered
+(`inference_pool_ready_pods`) — pod-Ready alone doesn't guarantee the EPP has picked them up yet —
+so the aiperf run actually exercises both replicas instead of risking load landing on just one.
 
 ## 4. Expected outputs
 
@@ -69,10 +71,15 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
 ## 5. Result interpretation
 
 - **Functional acceptance** (gated): all phases `ok`, functional probe `pass`, aiperf 0 errors,
-  0 missing metric series, cleanup leaves both nodes bare.
+  0 missing metric series, both replicas received load traffic (A2.2), cleanup tears down the k0s
+  cluster on both nodes.
 - **Scenario-2 acceptance** (spec §5):
   - **A2.1** two serving pods, one per node — `kubectl -n ws-s2-replicated get pod -l llm-d.ai/inference-serving=true -o wide` shows two, on different nodes.
-  - **A2.2** both replicas receive traffic — in the metric snapshots, `vllm:num_requests_running` and `vllm:generation_tokens_total` are non-zero for **both** pod `instance`s (the endpoint-picker balanced load).
+  - **A2.2** both replicas receive traffic under load (gated in the collect phase): each pod's
+    `vllm:generation_tokens_total` **delta** over the aiperf window — the value right before aiperf
+    launched vs. the post-run snapshot — must be positive. A raw post-run cumulative value isn't
+    enough on its own, since it would also count whatever the functional probe sent to a single pod
+    before aiperf ever started.
   - **A2.3** both GPUs loaded — `DCGM_FI_DEV_FB_USED` non-zero for **both** `Hostname`s in `metrics/DCGM_FI_DEV_FB_USED.json`.
   - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~131 tok/s), expected to exceed it.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
@@ -97,7 +104,8 @@ Scenario-2-specific:
 |---|---|---|
 | Only one serving pod (both scheduled, one Pending) | second node not joined, or its GPU not schedulable | check both nodes `Ready` (`bootstrap.log`) and both advertise `nvidia.com/gpu` (GPU operator ready on both) |
 | Both pods on the same node | spread is `ScheduleAnyway` (a preference) | expected only if a node lacks a free GPU; with 1 GPU/node the GPU request forces one per node |
-| Load hits only one replica (A2.2 fails) | endpoint-picker saw one pod, or `LOAD_CONCURRENCY` too low to fan out | confirm the `InferencePool` has two endpoints; raise `LOAD_CONCURRENCY` |
+| Execute phase dies "EPP never reported N ready pool endpoint(s)" | the endpoint-picker hasn't discovered all replicas yet (pod-Ready doesn't imply EPP-discovered) | check `inference_pool_ready_pods` is scraped (router subchart's EPP `ServiceMonitor`); raise `EPP_READY_CHECK_TIMEOUT` (default 180s) only if this is consistently a slow-converge race |
+| Collect phase dies "replica-traffic acceptance not met" (A2.2 fails) | endpoint-picker saw one pod, or `LOAD_CONCURRENCY` too low to fan out | compare `metrics/vllm_generation_tokens_total.json` against `metrics/_pre_load_vllm_generation_tokens_total.json` per `instance`; raise `LOAD_CONCURRENCY` |
 
 ## 8. Reproduction
 

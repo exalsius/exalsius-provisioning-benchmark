@@ -88,8 +88,12 @@ per pod/node from the metric snapshots:
 Common criteria (§7) **plus**:
 
 - **A2.1** Exactly **two** serving model-server pods running (LWS leaders), one per node.
-- **A2.2** Both replicas receive traffic under load — neither pod's request share is 0% during the
-  aiperf probe (endpoint-picker load-balancing verified).
+- **A2.2** Both replicas receive traffic **during the aiperf window specifically**, verified by a
+  per-pod delta of `vllm:generation_tokens_total` (value immediately before aiperf launches vs. the
+  post-run snapshot) rather than the raw cumulative counter — which is polluted by whatever the
+  functional probe already sent to a single pod before aiperf started — or the instantaneous
+  `num_requests_running` gauge, which can read 0 right after the run finishes regardless of whether
+  load was balanced. Both deltas must be positive.
 - **A2.3** Both GPUs report non-zero `DCGM_FI_DEV_FB_USED` (a full model copy on each node).
 - **A2.4** Aggregate and per-replica throughput are recorded and compared to the S1 baseline
   (expected to exceed it). Reported, not gated.
