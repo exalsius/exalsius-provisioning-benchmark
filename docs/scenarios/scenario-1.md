@@ -20,8 +20,12 @@ per-scenario config changed.
   `jq`, `envsubst`, `ssh`, `base64`) is bundled in the workflow image (`make build`).
 - **Provided node:** exactly **one** NVIDIA GPU node — the reference runs use a **Nebius L40S VM**
   (48 GB GPU; see [§2 Reference test environment](#21-reference-test-environment-known-good)) —
-  reachable over SSH with **passwordless `sudo`**, **NVIDIA driver ≥ 580** (CUDA 13, required by
-  the llm-d 0.9.0 image), outbound internet (pulls container images + model weights).
+  reachable over SSH with **passwordless `sudo`**, outbound internet (pulls container images +
+  model weights). **No NVIDIA driver is required on the node by default**: the GPU Operator
+  installs one **≥ 580** (CUDA 13, required by the llm-d 0.9.0 image) during `prepare`
+  (`GPU_OPERATOR_DRIVER_ENABLED=true`, the default). If the node already has driver ≥ 580
+  pre-installed, set `GPU_OPERATOR_DRIVER_ENABLED=false` to use it instead and skip
+  operator-managed driver install.
 - **Inputs** (prompted in the container when unset; pass explicitly in CI):
   - `NODE_ENDPOINTS` — the node as `ip:port` (e.g. `10.0.0.26:22`).
   - SSH username + private key (`SSH_USERNAME`; key mounted read-only).

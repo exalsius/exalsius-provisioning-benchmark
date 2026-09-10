@@ -14,7 +14,7 @@ baseline against which the replicated (S2) and sharded (S3) scenarios are compar
 
 | Item | Value |
 |------|-------|
-| Nodes | **1** NVIDIA node (`IP:Port`) with a single GPU (L40 48 GB reference; H100 validated), driver ≥ 580. |
+| Nodes | **1** NVIDIA node (`IP:Port`) with a single GPU (L40 48 GB reference; H100 validated); no driver required by default (see [common spec](common-experiment-setup.md#3-target-infrastructure)). |
 | Cluster | Single-node k0s cluster on that node (`bench-s1`), control plane co-located with the workload. |
 | Model | `MODEL_ID` (default `Qwen/Qwen3-8B`) — must fit on the single GPU. |
 
