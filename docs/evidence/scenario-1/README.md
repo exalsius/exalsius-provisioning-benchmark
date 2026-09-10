@@ -8,8 +8,9 @@ file:
   (`run-1/`, `run-2/`), tracked via Git LFS (see repo `.gitattributes`).
 
 > **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-03, both meeting the
-> functional acceptance criteria (T3.2). run-2 started 1 s after run-1's cleanup, from the now-bare
-> node — consecutive from a clean state.
+> functional acceptance criteria (T3.2). run-2 started 1 s after run-1's cleanup tore down the k0s
+> cluster on the same node — consecutive from a fresh cluster, not a rebooted/bare node (see
+> [`../../scenarios/scenario-1.md` §6](../../scenarios/scenario-1.md#6-known-limitations)).
 
 ## What the tarball contains (per run)
 
@@ -38,7 +39,9 @@ and hardware ids are left as-is.
 ## Runs
 
 Both runs were executed on the reference test environment — a **Nebius L40S VM** (1× NVIDIA L40S
-48 GB, 8 vCPU, 32 GiB, Ubuntu 24.04) — documented in full in
+48 GB, 8 vCPU, 32 GiB, plain Ubuntu 24.04 image with no pre-installed NVIDIA driver — the GPU
+Operator installed one during `prepare`, confirmed by both runs' `prepare.log`
+(`--set driver.enabled=true`)) — documented in full in
 [`../../scenarios/scenario-1.md` §2.1](../../scenarios/scenario-1.md#21-reference-test-environment-known-good).
 
 | Run | Workflow commit | Node / GPU | Model | Start (UTC) | Duration | Verdict |
@@ -59,7 +62,7 @@ sanitization fixes staged on that branch). Update to the merged commit SHA when 
 | aiperf load — 0 request errors (`error_summary: []`) | ✅ | ✅ |
 | Required metric series present (0 missing) | ✅ | ✅ |
 | One serving pod on one GPU — `DCGM_FI_DEV_FB_USED` non-zero (A1.1/A1.2) | ✅ 43634 MiB | ✅ |
-| Cleanup — `k0sctl reset`, node left bare | ✅ | ✅ |
+| Cleanup — `k0sctl reset` tears down the k0s cluster | ✅ | ✅ |
 
 ## Recorded baseline (reported, not gated)
 

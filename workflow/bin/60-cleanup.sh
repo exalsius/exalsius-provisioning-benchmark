@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Phase 6 — Cleanup. Delete the workspace, then destroy the whole cluster so the
-# nodes return to a bare state. Defines phase_cleanup.
+# Phase 6 — Cleanup. Delete the workspace, then destroy the whole cluster (not a
+# reboot — see run-repeat.sh). Defines phase_cleanup.
 # Idempotent and best-effort: cleanup must succeed even from a partial run.
 
 phase_cleanup() {

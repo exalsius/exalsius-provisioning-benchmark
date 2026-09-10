@@ -297,7 +297,8 @@ serves, and is observable — not on hitting performance targets. Performance fi
    run window (the collect phase fails otherwise), and visible in Grafana (T6.4).
 5. **Reproducibility.** **Two consecutive** clean-state runs both pass, with stored logs,
    config, and result artifacts per §5.
-6. **Cleanup.** Phase 6 (`k0sctl reset`) destroys the cluster and leaves the nodes bare.
+6. **Cleanup.** Phase 6 (`k0sctl reset`) destroys the cluster on the nodes (not a reboot; see §4's
+   idempotency note).
 
 > Phase timings (see each scenario's *Indicative timings*) are informational — **not** gates.
 

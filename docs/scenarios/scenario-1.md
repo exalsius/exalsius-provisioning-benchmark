@@ -61,7 +61,7 @@ this is the exact, reproducible baseline:
 | vCPUs | 8 |
 | Memory | 32 GiB |
 | Boot disk | 1280 GiB SSD (4 KiB block), encryption enabled |
-| OS | Ubuntu 24.04 LTS |
+| OS | Ubuntu 24.04 LTS — **plain image, no pre-installed NVIDIA driver** |
 | VM type | Regular (no reservation / placement policy) |
 
 **Sizing rationale.** On this 8-vCPU node the model pod shares CPU with the co-located control plane
