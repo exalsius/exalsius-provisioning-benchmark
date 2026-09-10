@@ -109,6 +109,15 @@ _on_exit() {
   if [[ $KEEP -eq 0 && -n "${CURRENT_PHASE:-}" && "${CURRENT_PHASE}" != "cleanup" ]]; then
     warn "attempting cleanup after failure"
     phase_cleanup || err "cleanup after failure also failed"
+  elif [[ $KEEP -eq 0 && "${CURRENT_PHASE:-}" == "cleanup" ]]; then
+    # Cleanup itself failed/aborted (e.g. an unguarded command tripped `set -e`
+    # before reaching sanitize_run_dir) — the recursion guard above means we
+    # cannot safely re-run phase_cleanup, but sanitization must still happen so
+    # the run directory never keeps unsanitized SSH/host/HF-token data.
+    if [[ "${DRY_RUN:-0}" != "1" ]] && declare -F sanitize_run_dir >/dev/null; then
+      warn "cleanup aborted before sanitizing — sanitizing run artifacts directly"
+      sanitize_run_dir "$RUN_DIR" || err "sanitizing run artifacts also failed"
+    fi
   fi
   log "run failed: artifacts ${RUN_DIR#"$WORKFLOW_ROOT"/}"
 }
