@@ -62,7 +62,9 @@ phase_collect() {
   if [[ "$ws_ready" != "True" ]]; then
     die "WorkspaceDeployment Ready/Available condition never read True (status: ${ws_ready}) — see results/workspace-describe.txt"
   fi
-  if (( active_replicas < expected_replicas )); then
+  if [[ "$active_replicas" == "missing" ]]; then
+    die "replica-traffic acceptance not checkable: pre-load or post-load vllm:generation_tokens_total snapshot is missing (see metrics/_pre_load_vllm_generation_tokens_total.json, metrics/vllm_generation_tokens_total.json — expected from 40-execute.sh's _snapshot_pre_load_counters and this phase's own metric snapshot respectively)"
+  elif (( active_replicas < expected_replicas )); then
     die "replica-traffic acceptance not met: only ${active_replicas}/${expected_replicas} replica(s) show a positive vllm:generation_tokens_total delta over the aiperf window (see metrics/vllm_generation_tokens_total.json vs metrics/_pre_load_vllm_generation_tokens_total.json)"
   fi
 }
@@ -74,14 +76,16 @@ phase_collect() {
 # idle since it started" — so compare each pod's vllm:generation_tokens_total
 # against the snapshot the execute phase took right before aiperf launched
 # (40-execute.sh's _snapshot_pre_load_counters) and require a positive delta.
-# Prints the number of replicas with delta > 0 (0 if either snapshot is missing,
-# e.g. DRY_RUN or an aborted execute phase).
+# Prints the number of replicas with delta > 0, or the literal string "missing"
+# if either snapshot is absent (e.g. an aborted execute phase) — kept distinct
+# from a genuine 0 so the failure message doesn't read as "traffic imbalanced"
+# when the real problem is a missing snapshot. DRY_RUN short-circuits to pass.
 _check_replica_traffic() {
   local expected="$1"
   [[ "${DRY_RUN:-0}" == "1" ]] && { echo "$expected"; return 0; }
   local pre="$RUN_DIR/metrics/_pre_load_vllm_generation_tokens_total.json"
   local post="$RUN_DIR/metrics/vllm_generation_tokens_total.json"
-  [[ -s "$pre" && -s "$post" ]] || { echo 0; return 0; }
+  [[ -s "$pre" && -s "$post" ]] || { echo missing; return 0; }
   jq -s '
     (.[0].data.result // []) as $preArr
     | (.[1].data.result // []) as $post

@@ -71,8 +71,8 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
 ## 5. Result interpretation
 
 - **Functional acceptance** (gated): all phases `ok`, functional probe `pass`, aiperf 0 errors,
-  0 missing metric series, both replicas received load traffic (A2.2), cleanup tears down the k0s
-  cluster on both nodes.
+  0 missing metric series, `WorkspaceDeployment` Ready/Available `True`, both replicas received load
+  traffic (A2.2), cleanup tears down the k0s cluster on both nodes.
 - **Scenario-2 acceptance** (spec §5):
   - **A2.1** two serving pods, one per node — `kubectl -n ws-s2-replicated get pod -l llm-d.ai/inference-serving=true -o wide` shows two, on different nodes.
   - **A2.2** both replicas receive traffic under load (gated in the collect phase): each pod's

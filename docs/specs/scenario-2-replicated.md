@@ -2,7 +2,7 @@
 
 > **Inherits:** [Common Experiment Specification](common-experiment-setup.md).
 > Only the deltas relative to the common spec are stated here.
-> **Status:** As-built — implementation ready (T4.1); live verification pending (T4.2). Builds on
+> **Status:** Implemented (as-built). Verified — two consecutive clean runs (T4.2). Builds on
 > the Scenario 1 reference implementation. Operator runbook: [`../scenarios/scenario-2.md`](../scenarios/scenario-2.md).
 
 The **same** medium-sized LLM as S1, served by **two independent model-server pods** — one per

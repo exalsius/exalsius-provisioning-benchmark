@@ -22,10 +22,10 @@ used.
 | preflight | [`bin/00-preflight.sh`](bin/00-preflight.sh) | Check tooling, inputs, SSH/GPU reachability, node count. |
 | bootstrap | [`bin/10-bootstrap.sh`](bin/10-bootstrap.sh) | `k0sctl` brings up k0s on the provided SSH nodes; export kubeconfig. |
 | prepare | [`bin/20-prepare.sh`](bin/20-prepare.sh) | Install OpenEBS (default StorageClass) + GPU operator; k0rdent/KCM; **KOF** (VictoriaMetrics storage + OTel collectors, regionless); exalsius-operator; **adopt** the cluster into k0rdent; register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). |
-| deploy | [`bin/30-deploy.sh`](bin/30-deploy.sh) | Render + apply the scenario `WorkspaceDeployment`; wait for the endpoint. |
-| execute | [`bin/40-execute.sh`](bin/40-execute.sh) | Functional probe (in-cluster curl) + load probe (**aiperf** as an in-cluster Job). |
-| collect | [`bin/50-collect.sh`](bin/50-collect.sh) | Snapshot required metric series from **VictoriaMetrics** (KOF); write `run-report.md`. |
-| cleanup | [`bin/60-cleanup.sh`](bin/60-cleanup.sh) | Delete the workspace, then `k0sctl reset` — nodes return to bare. |
+| deploy | [`bin/30-deploy.sh`](bin/30-deploy.sh) | Render + apply the scenario `WorkspaceDeployment`; wait for the model's workspace namespace to appear. |
+| execute | [`bin/40-execute.sh`](bin/40-execute.sh) | Wait for every serving pod Ready **and** the endpoint-picker to discover them (`inference_pool_ready_pods`); functional probe (in-cluster curl) + load probe (**aiperf** as an in-cluster Job). |
+| collect | [`bin/50-collect.sh`](bin/50-collect.sh) | Snapshot required metric series from **VictoriaMetrics** (KOF); verify `WorkspaceDeployment` Ready/Available and (multi-replica) per-pod load traffic; write `run-report.md`. |
+| cleanup | [`bin/60-cleanup.sh`](bin/60-cleanup.sh) | Delete the workspace, then `k0sctl reset` — destroys the k0s cluster on the nodes (not a reboot). |
 
 ## Prerequisites
 
@@ -123,8 +123,10 @@ pods **one** model sharded across both nodes instead of two independent replicas
 [`templates/workspacedeployment.yaml.tmpl`](templates/workspacedeployment.yaml.tmpl) and
 [`templates/workspace-class.yaml`](templates/workspace-class.yaml).
 
-> **Driver floor:** llm-d 0.9.0's CUDA 13 image requires **NVIDIA driver ≥ 580** on the nodes; the
-> GPU operator version in `config/common.env` must ship a ≥580 driver branch.
+> **Driver floor:** llm-d 0.9.0's CUDA 13 image needs **NVIDIA driver ≥ 580** — no pre-installed
+> driver required on the nodes by default, the GPU operator installs one (`GPU_OPERATOR_DRIVER_ENABLED=true`);
+> the GPU operator version in `config/common.env` must ship a ≥580 driver branch. Set
+> `GPU_OPERATOR_DRIVER_ENABLED=false` if the nodes already have driver ≥ 580 pre-installed.
 
 ## Artifacts
 
@@ -143,7 +145,9 @@ runs/<scenario>/<run-id>/
 
 ## Acceptance (functional)
 
-A run passes on: provisioning succeeds, the endpoint returns a valid non-empty completion, the
-aiperf load export is captured with no request errors, all required metric series are present, and
-cleanup leaves the nodes bare. Performance figures (throughput, TTFT, latency) are **recorded and
-reported, not gated**. Reproducibility = two consecutive clean runs both passing.
+A run passes on: provisioning succeeds (including the `WorkspaceDeployment` reaching Ready/Available),
+the endpoint returns a valid non-empty completion, the aiperf load export is captured with no
+request errors, every replica actually received load traffic (multi-replica scenarios), all
+required metric series are present, and cleanup destroys the k0s cluster on the nodes (not a
+reboot). Performance figures (throughput, TTFT, latency) are **recorded and reported, not gated**.
+Reproducibility = two consecutive clean runs both passing.

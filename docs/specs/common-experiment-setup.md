@@ -330,8 +330,9 @@ serves, and is observable — not on hitting performance targets. Performance fi
 The concrete artifacts and pinned versions that satisfy these are produced by the **T2** workflow.
 
 - **Nodes.** Each provided node has a **single NVIDIA GPU** (L40S 48 GB reference; H100 validated),
-  driver ≥ 580, reachable over SSH with passwordless `sudo`. Each scenario gets exactly the nodes it
-  needs (S1: 1, S2/S3: 2) and provisions a fresh cluster on them.
+  reachable over SSH with passwordless `sudo`. No driver pre-installed is required by default (§3);
+  the GPU Operator installs one ≥ 580. Each scenario gets exactly the nodes it needs (S1: 1, S2/S3:
+  2) and provisions a fresh cluster on them.
 - **Model.** All scenarios serve `MODEL_ID` (default `Qwen/Qwen3-8B`); it fits one GPU, so S3
   exercises the cross-node sharding path demonstratively.
 - **Cluster bootstrap.** k0s via `k0sctl` (versions pinned by the T2 workflow; k0s ≥ 1.32 is

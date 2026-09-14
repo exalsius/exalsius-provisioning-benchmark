@@ -23,7 +23,7 @@ an as-built banner pending T5. Operator runbooks:
 |------|------|---------|
 | [Common Experiment Setup](common-experiment-setup.md) | T1 | Shared infrastructure assumptions, deployment conventions, end-to-end flow, expected outputs, required metrics, and acceptance criteria inherited by every scenario. **As-built.** |
 | [Scenario 1 — Single-node](scenario-1-single-node.md) | T1.1 / T3 | Medium LLM, one pod, one NVIDIA node. Reference baseline. **Implemented.** |
-| [Scenario 2 — Replicated](scenario-2-replicated.md) | T1.2 / T4 | Same model, two replicas across two nodes — horizontal scaling / availability. **As-built; verification pending.** |
+| [Scenario 2 — Replicated](scenario-2-replicated.md) | T1.2 / T4 | Same model, two replicas across two nodes — horizontal scaling / availability. **Implemented; verified (T4).** |
 | [Scenario 3 — Sharded](scenario-3-sharded.md) | T1.3 / T5 | Same model, one model sharded across two nodes — cross-node sharding. Draft. |
 
 ## Reading order

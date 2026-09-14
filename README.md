@@ -67,7 +67,7 @@ result interpretation, troubleshooting, and reproduction.
 | Path | What |
 |------|------|
 | [`workflow/`](workflow/) | The reusable containerised end-to-end workflow (phase scripts, config, templates, Dockerfile, Makefile). See [`workflow/README.md`](workflow/README.md). |
-| [`docs/specs/`](docs/specs/) | Experiment specifications — the [common setup](docs/specs/common-experiment-setup.md) + per-scenario specs (as-built for S1). |
+| [`docs/specs/`](docs/specs/) | Experiment specifications — the [common setup](docs/specs/common-experiment-setup.md) + per-scenario specs (as-built for S1/S2). |
 | [`docs/scenarios/`](docs/scenarios/) | Operator runbooks — [Scenario 1](docs/scenarios/scenario-1.md), [Scenario 2](docs/scenarios/scenario-2.md). |
 | [`docs/evidence/`](docs/evidence/) | Committed verification evidence (sanitized run artifacts, Git LFS). |
 
