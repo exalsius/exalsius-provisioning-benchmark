@@ -17,26 +17,15 @@ REQUIRED_METRICS=(
 
 phase_collect() {
   export KUBECONFIG="$KUBECONFIG_OUT"
-  # Query VictoriaMetrics (KOF storage) via the vmselect Service.
-  local vm_svc="$VM_QUERY_SERVICE" local_port=18428
-  local base="http://127.0.0.1:${local_port}"
-
-  if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    kubectl -n "$KOF_NAMESPACE" port-forward "svc/$vm_svc" "${local_port}:${VM_QUERY_PORT}" \
-      >>"$RUN_DIR/collect.log" 2>&1 &
-    local pf_pid=$!
-    # shellcheck disable=SC2064
-    trap "kill $pf_pid 2>/dev/null || true" RETURN
-    wait_for 60 "VictoriaMetrics query API up" bash -c "curl -sf ${base}/health -o /dev/null" || \
-      warn "VictoriaMetrics not reachable; metric snapshot may be empty"
-  fi
+  vm_query_start "$RUN_DIR/collect.log"
+  # shellcheck disable=SC2064
+  trap "vm_query_stop" RETURN
 
   local present=() missing=() m
   for m in "${REQUIRED_METRICS[@]}"; do
     local safe; safe="$(printf '%s' "$m" | tr ':/' '__')"
     if [[ "${DRY_RUN:-0}" == "1" ]]; then present+=("$m"); continue; fi
-    curl -sf --data-urlencode "query=$m" "${base}${VM_QUERY_PATH}" \
-      -o "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || true
+    vm_query_json "$m" > "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || true
     if [[ "$(jq -r '.data.result | length' "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || echo 0)" -gt 0 ]]; then
       present+=("$m")
     else
@@ -57,10 +46,15 @@ phase_collect() {
 
   local ws_ready; ws_ready="$(_check_workspace_ready)"
 
+  local expected_replicas=$(( ${REPLICAS:-1} / ${NODES_PER_REPLICA:-1} ))
+  (( expected_replicas >= 1 )) || expected_replicas=1
+  local active_replicas; active_replicas="$(_check_replica_traffic "$expected_replicas")"
+
   # Write the report first (so the artifact exists even on failure), then enforce
-  # the hard gates: presence of all required metric series (README §Acceptance) and
-  # the WorkspaceDeployment reaching Ready/Available — a gap in either fails the run.
-  _write_report "${#missing[@]}" "$ws_ready"
+  # the hard gates: presence of all required metric series (README §Acceptance), the
+  # WorkspaceDeployment reaching Ready/Available, and every replica having actually
+  # received traffic during the load window — a gap in any fails the run.
+  _write_report "${#missing[@]}" "$ws_ready" "$active_replicas" "$expected_replicas"
   info "collection complete -> ${RUN_DIR#"$WORKFLOW_ROOT"/}/run-report.md"
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "telemetry acceptance not met: ${#missing[@]} required metric series missing (${missing[*]})"
@@ -68,6 +62,35 @@ phase_collect() {
   if [[ "$ws_ready" != "True" ]]; then
     die "WorkspaceDeployment Ready/Available condition never read True (status: ${ws_ready}) — see results/workspace-describe.txt"
   fi
+  if (( active_replicas < expected_replicas )); then
+    die "replica-traffic acceptance not met: only ${active_replicas}/${expected_replicas} replica(s) show a positive vllm:generation_tokens_total delta over the aiperf window (see metrics/vllm_generation_tokens_total.json vs metrics/_pre_load_vllm_generation_tokens_total.json)"
+  fi
+}
+
+# A2.2: verify every replica actually served aiperf traffic, not just that the
+# aggregate series is non-empty. A post-run cumulative counter alone can't tell
+# "this pod served the load" from "this pod only ever answered the functional
+# probe" (which the gateway can route to any one replica) or "this pod has been
+# idle since it started" — so compare each pod's vllm:generation_tokens_total
+# against the snapshot the execute phase took right before aiperf launched
+# (40-execute.sh's _snapshot_pre_load_counters) and require a positive delta.
+# Prints the number of replicas with delta > 0 (0 if either snapshot is missing,
+# e.g. DRY_RUN or an aborted execute phase).
+_check_replica_traffic() {
+  local expected="$1"
+  [[ "${DRY_RUN:-0}" == "1" ]] && { echo "$expected"; return 0; }
+  local pre="$RUN_DIR/metrics/_pre_load_vllm_generation_tokens_total.json"
+  local post="$RUN_DIR/metrics/vllm_generation_tokens_total.json"
+  [[ -s "$pre" && -s "$post" ]] || { echo 0; return 0; }
+  jq -s '
+    (.[0].data.result // []) as $preArr
+    | (.[1].data.result // []) as $post
+    | ($preArr | map({(.metric.instance): .value[1]}) | add // {}) as $preMap
+    | [ $post[] as $p
+        | (($p.value[1] | tonumber) - (($preMap[$p.metric.instance] // "0") | tonumber))
+      ]
+    | map(select(. > 0)) | length
+  ' "$pre" "$post" 2>/dev/null || echo 0
 }
 
 # Gate on the WorkspaceDeployment's own Ready/Available condition — checked HERE,
@@ -96,7 +119,8 @@ _check_workspace_ready() {
 }
 
 _write_report() {
-  local n_missing="$1" ws_ready="${2:-Unknown}" report="$RUN_DIR/run-report.md"
+  local n_missing="$1" ws_ready="${2:-Unknown}" active_replicas="${3:-0}" expected_replicas="${4:-1}"
+  local report="$RUN_DIR/run-report.md"
   local func_ok="unknown"
   # Functional probe = raw OpenAI response; pass iff a non-empty completion.
   if [[ -f "$RUN_DIR/results/functional.json" ]]; then
@@ -137,6 +161,8 @@ _write_report() {
     echo "- WorkspaceDeployment Ready/Available condition: **${ws_ready}** (must be True; checked" \
          "here rather than during deploy-phase sequencing — see" \
          "\`docs/specs/common-experiment-setup.md\` §7.1)"
+    echo "- Replicas that received load traffic: **${active_replicas}/${expected_replicas}** (must" \
+         "equal expected; per-pod \`vllm:generation_tokens_total\` delta over the aiperf window — A2.2)"
     echo
     echo "## Recorded performance (aiperf; reported, not gated)"
     echo "- Output token throughput: ${tput}"
