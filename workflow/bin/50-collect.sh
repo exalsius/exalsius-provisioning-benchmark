@@ -55,18 +55,48 @@ phase_collect() {
   kc -n "$WORKSPACE_NAMESPACE" describe workspacedeployment "$WORKSPACE_NAME" \
     > "$RUN_DIR/results/workspace-describe.txt" 2>/dev/null || true
 
+  local ws_ready; ws_ready="$(_check_workspace_ready)"
+
   # Write the report first (so the artifact exists even on failure), then enforce
-  # the telemetry acceptance gate: presence of all required series is a hard
-  # requirement (README §Acceptance), so a gap fails the run — not just a warning.
-  _write_report "${#missing[@]}"
+  # the hard gates: presence of all required metric series (README §Acceptance) and
+  # the WorkspaceDeployment reaching Ready/Available — a gap in either fails the run.
+  _write_report "${#missing[@]}" "$ws_ready"
   info "collection complete -> ${RUN_DIR#"$WORKFLOW_ROOT"/}/run-report.md"
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "telemetry acceptance not met: ${#missing[@]} required metric series missing (${missing[*]})"
   fi
+  if [[ "$ws_ready" != "True" ]]; then
+    die "WorkspaceDeployment Ready/Available condition never read True (status: ${ws_ready}) — see results/workspace-describe.txt"
+  fi
+}
+
+# Gate on the WorkspaceDeployment's own Ready/Available condition — checked HERE,
+# not during deploy-phase sequencing (30-deploy.sh), because that condition can read
+# True while the shared llm-d-infra prerequisite is still installing; gating deploy on
+# it would have let a run proceed before the model's ServiceSet was even applied. By
+# collect time the execute phase has already proven the model serves (leader pod
+# Ready + a real functional-probe completion), so the condition should already have
+# converged — bounded poll (default 60s) as a safety margin, not a real wait. If it
+# still isn't True, that's a genuine inconsistency in the operator's reported status
+# and the run fails, per the common spec's acceptance criteria (§7.1).
+_check_workspace_ready() {
+  [[ "${DRY_RUN:-0}" == "1" ]] && { echo "True"; return 0; }
+  local timeout="${WORKSPACE_READY_CHECK_TIMEOUT:-60}"
+  local deadline=$(( $(date +%s) + timeout )) status=""
+  while :; do
+    status="$(kc -n "$WORKSPACE_NAMESPACE" get workspacedeployment "$WORKSPACE_NAME" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    [[ -z "$status" ]] && status="$(kc -n "$WORKSPACE_NAMESPACE" get workspacedeployment "$WORKSPACE_NAME" \
+      -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+    [[ "$status" == "True" ]] && { echo "True"; return 0; }
+    (( $(date +%s) < deadline )) || break
+    sleep 5
+  done
+  echo "${status:-none}"
 }
 
 _write_report() {
-  local n_missing="$1" report="$RUN_DIR/run-report.md"
+  local n_missing="$1" ws_ready="${2:-Unknown}" report="$RUN_DIR/run-report.md"
   local func_ok="unknown"
   # Functional probe = raw OpenAI response; pass iff a non-empty completion.
   if [[ -f "$RUN_DIR/results/functional.json" ]]; then
@@ -92,7 +122,7 @@ _write_report() {
     echo
     echo "- **Scenario:** ${SCENARIO} (${WORKSPACE_NAME})"
     echo "- **Cluster:** ${CLUSTER_NAME}  ·  **Model:** ${MODEL_ID}"
-    echo "- **Topology:** replicas=${DECODE_REPLICAS} (ms.decode.replicas), gpu/replica=${GPU_COUNT_PER_REPLICA} (ms.decode.parallelism.tensor)"
+    echo "- **Topology:** replicas=${REPLICAS} pods · gpu/pod=${GPU_COUNT_PER_REPLICA} · nodes/replica=${NODES_PER_REPLICA} (tensor-parallel size $((GPU_COUNT_PER_REPLICA * NODES_PER_REPLICA)))"
     echo "- **Load tool:** aiperf (in-cluster Job)  ·  **Run dir:** \`${RUN_DIR#"$WORKFLOW_ROOT"/}\`"
     echo
     echo "## Phases"
@@ -104,6 +134,9 @@ _write_report() {
     echo "- Functional probe (non-empty completion): **${func_ok}**"
     echo "- aiperf load export captured: **$( [[ -s "$RUN_DIR/results/aiperf.json" ]] && echo yes || echo no )**"
     echo "- Required metric series missing: **${n_missing}** (must be 0)"
+    echo "- WorkspaceDeployment Ready/Available condition: **${ws_ready}** (must be True; checked" \
+         "here rather than during deploy-phase sequencing — see" \
+         "\`docs/specs/common-experiment-setup.md\` §7.1)"
     echo
     echo "## Recorded performance (aiperf; reported, not gated)"
     echo "- Output token throughput: ${tput}"

@@ -32,6 +32,8 @@ export WORKFLOW_ROOT="$(cd "$HERE/.." && pwd)"
 source "$WORKFLOW_ROOT/lib/common.sh"
 # shellcheck source=../lib/render.sh
 source "$WORKFLOW_ROOT/lib/render.sh"
+# shellcheck source=../lib/sanitize.sh
+source "$WORKFLOW_ROOT/lib/sanitize.sh"
 
 PHASES=(preflight bootstrap prepare deploy execute collect cleanup)
 
@@ -85,7 +87,7 @@ log "scenario=$SCENARIO cluster=$CLUSTER_NAME model=$MODEL_ID run=${RUN_ID} dir=
 # Fresh runs start a clean ledger + config snapshot; reuse (cleanup) appends.
 if [[ "$REUSE" != "reuse" ]]; then
   : > "$RUN_DIR/phases.tsv"
-  { set -o posix; set | grep -E '^(SCENARIO|RUN_ID|CLUSTER_NAME|WORKSPACE_NAME|MODEL_ID|MODEL_URI|NODE_ENDPOINTS|SSH_USERNAME|EXPECTED_NODE_COUNT|DECODE_REPLICAS|GPU_COUNT_PER_REPLICA|WORKSPACE_CLASS|K0S_VERSION|KCM_VERSION|EXALSIUS_OPERATOR_VERSION|GPU_OPERATOR_VERSION|KOF_VERSION|AIPERF_IMAGE|LOAD_)' ; } > "$RUN_DIR/config.env" || true
+  { set -o posix; set | grep -E '^(SCENARIO|RUN_ID|CLUSTER_NAME|WORKSPACE_NAME|MODEL_ID|NODE_ENDPOINTS|SSH_USERNAME|EXPECTED_NODE_COUNT|REPLICAS|GPU_COUNT_PER_REPLICA|NODES_PER_REPLICA|WORKSPACE_CPU|GPU_VENDOR|WORKSPACE_CLASS|K0S_VERSION|KCM_VERSION|EXALSIUS_OPERATOR_VERSION|GPU_OPERATOR_VERSION|KOF_VERSION|AIPERF_IMAGE|LOAD_)' ; } > "$RUN_DIR/config.env" || true
 fi
 
 # --- load phase functions ----------------------------------------------------
@@ -107,6 +109,15 @@ _on_exit() {
   if [[ $KEEP -eq 0 && -n "${CURRENT_PHASE:-}" && "${CURRENT_PHASE}" != "cleanup" ]]; then
     warn "attempting cleanup after failure"
     phase_cleanup || err "cleanup after failure also failed"
+  elif [[ $KEEP -eq 0 && "${CURRENT_PHASE:-}" == "cleanup" ]]; then
+    # Cleanup itself failed/aborted (e.g. an unguarded command tripped `set -e`
+    # before reaching sanitize_run_dir) — the recursion guard above means we
+    # cannot safely re-run phase_cleanup, but sanitization must still happen so
+    # the run directory never keeps unsanitized SSH/host/HF-token data.
+    if [[ "${DRY_RUN:-0}" != "1" ]] && declare -F sanitize_run_dir >/dev/null; then
+      warn "cleanup aborted before sanitizing — sanitizing run artifacts directly"
+      sanitize_run_dir "$RUN_DIR" || err "sanitizing run artifacts also failed"
+    fi
   fi
   log "run failed: artifacts ${RUN_DIR#"$WORKFLOW_ROOT"/}"
 }

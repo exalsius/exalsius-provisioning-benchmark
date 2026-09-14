@@ -2,7 +2,15 @@
 
 > **Inherits:** [Common Experiment Specification](common-experiment-setup.md).
 > Only the deltas relative to the common spec are stated here.
-> **Status:** Draft (design-only). Builds on the Scenario 1 reference implementation.
+> **Status:** Draft (design-only) — **not yet implemented** (T5). Builds on the Scenario 1 reference implementation.
+>
+> **As-built note (T3):** the stack + topology mapping changed during implementation — see the
+> [common spec Deviations](common-experiment-setup.md#deviations-from-the-original-design-as-built).
+> When S3 is implemented the sharded topology becomes: workspace `llm-d-model-1-0-0`;
+> `resources.replicas: 2`, `perReplica.gpuCount: 1`, `modelServer.nodesPerReplica: 2` — i.e. two
+> pods that together serve ONE model (a LeaderWorkerSet of size 2, TP = 2), replacing the draft's
+> `multinode: true` / `tensorParallelism: 2`. The tables below still show the original draft values
+> and will be reconciled in T5.
 
 The **same** medium-sized LLM as S1/S2, served by a **single logical replica whose weights are
 tensor-parallel-split across two nodes** (`multinode: true`, `tensorParallelism: 2`). Unlike S2,

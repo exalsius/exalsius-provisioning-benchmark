@@ -1,7 +1,9 @@
 # Common Experiment Specification (T1)
 
 > **Work package:** WP3 — Exalsius provisioning and experimentation benchmark
-> **Status:** Draft (design-only; no live infrastructure exercised yet)
+> **Status:** Implemented (as-built). Originally authored as a design-only draft in T1; updated to
+> match the T2 workflow + T3 Scenario 1 reference implementation. See
+> [Deviations from the original design](#deviations-from-the-original-design-as-built).
 > **Applies to:** [Scenario 1 — Single-node](scenario-1-single-node.md), [Scenario 2 — Replicated](scenario-2-replicated.md), [Scenario 3 — Sharded](scenario-3-sharded.md)
 
 This document defines the **common experiment setup** shared by all three benchmark
@@ -14,13 +16,14 @@ Exalsius-managed compute environment from a set of provided compute instances
 (`SSH IP:Port`), deploy a curated minimal LLM inference workspace, and **validate**
 functionality and telemetry collection.
 
-> **Open-source-only constraint.** This benchmark uses **only the public Exalsius
-> components** — the `exalsius-operator`, `k0rdent`/KCM, `exalsius-workspace-hub`, and
-> `exalsius-grafana-dashboards`, driven by `k0sctl`/`kubectl`/`helm` and tailored scripting.
-> The `exls` CLI and the SaaS observability (VictoriaMetrics) are **not used**. Note: `exls` is
-> itself open-source, but it drives the **closed-source Exalsius SaaS API**, which makes it
-> infeasible in a self-hosted, OSS-only setup — hence the CRD/Helm-driven approach below, which a
-> third party can reproduce entirely from public artifacts.
+> **Open-source-only constraint.** This benchmark uses **only public Exalsius / OSS components** —
+> the `exalsius-operator`, `k0rdent`/KCM, `exalsius-workspace-hub`, k0rdent **KOF** (VictoriaMetrics
+> + OpenTelemetry), the NVIDIA GPU operator, and OpenEBS — driven by `k0sctl`/`kubectl`/`helm` and
+> tailored scripting. The `exls` CLI and the **closed-source Exalsius SaaS API** are **not used**.
+> Note the distinction: **VictoriaMetrics is used**, but as the **OSS** storage layer bundled in
+> k0rdent KOF (self-hosted), not the SaaS observability offering. `exals` is itself open-source but
+> drives the SaaS API, which is infeasible in a self-hosted OSS-only setup — hence the CRD/Helm-driven
+> approach below, reproducible entirely from public artifacts.
 
 > **Self-contained single-cluster topology.** To stay compact, **the management cluster and the
 > target cluster are the same cluster**. Each run bootstraps a fresh Kubernetes cluster
@@ -29,6 +32,28 @@ functionality and telemetry collection.
 > tears the whole thing down (`k0sctl reset`). There is **no separate management cluster** and
 > **no `Colony`-driven child-cluster provisioning** — the cluster is *adopted* into k0rdent, not
 > provisioned by it.
+
+---
+
+## Deviations from the original design (as-built)
+
+The T1 draft was written before implementation. During T2 (workflow) and T3 (Scenario 1) the
+stack changed. This section is the authoritative old→new mapping; the rest of the document reflects
+the **as-built** choices.
+
+| Area | Original design (T1 draft) | As-built (T2/T3) | Why |
+|------|----------------------------|------------------|-----|
+| Observability | `kube-prometheus-stack` (Prometheus + Grafana), PromQL | k0rdent **KOF** (VictoriaMetrics storage + OpenTelemetry collectors, regionless) + Grafana; queried via `vmselect` | KOF is the k0rdent-native OSS observability layer (already flagged as the OSS alternative); one umbrella gives storage + OTel collectors. Still OSS, still no SaaS. |
+| Metrics scraping | `ServiceMonitor`/`PodMonitor` → Prometheus | KOF collectors' OTel target-allocator watches Service/PodMonitors → VictoriaMetrics. DCGM via the GPU operator's `ServiceMonitor`; **vLLM via a workflow-applied `PodMonitor`** | The workspace-hub 1.0.0 model chart ships no scrape object for the vLLM pods, so the workflow provides one. |
+| Storage | (unspecified) | **OpenEBS** installed as the default StorageClass | KOF/VictoriaMetrics PVCs need a default StorageClass; bare k0s ships none. |
+| Workspace catalog | WorkspaceClass `llm-inference`, template `llm-inference-workspace-2.0.0`, prereq `llm-d-stack` | workspace-hub **1.0.0**: WorkspaceClass `llm-d-model-1-0-0`, prereq ServiceTemplate `llm-d-infra-1-0-0` | workspace-hub was re-platformed onto **llm-d 0.9.0** (router charts + an owned LeaderWorkerSet model server). |
+| Topology values | `values.decode.replicas`, `values.tensorParallelism`, `values.multinode` | `resources.replicas`, `resources.perReplica.gpuCount`, `values.modelServer.nodesPerReplica`; **TP = nodesPerReplica × gpuCount** | The chart reads the operator's `_exalsius.resources` directly (no `resourceInjection`); the single/multi-node split is one Helm value. |
+| Model field | `values.modelName` + `MODEL_URI` (`hf://…`) | single `values.model.name` (the HF repo id) | vLLM takes the repo id directly; the separate URI is gone. |
+| GPU request | implicit from the chart | WorkspaceDeployment sets `resources.perReplica.gpuVendor: NVIDIA` so the operator injects `gpuResourceName` (`nvidia.com/gpu`) | Without a vendor (or GPU node selector) the 1.0.0 chart renders **no** GPU request and vLLM starts CPU-only. |
+| GPU driver | ≥ 535 | **≥ 580** (CUDA 13) | llm-d 0.9.0 CUDA-13 images require driver ≥ 580. |
+| Load client | generic Python client, `load.json` | **aiperf** (NVIDIA ai-dynamo) run in-cluster as a Kubernetes Job, `aiperf.json` | Standard OpenAI-compatible load tool; running in-cluster exercises the real serving path. |
+| Endpoint access | direct to the llm-d endpoint | shared agentgateway `llm-d-inference-gateway:80` + `X-Gateway-Model-Name: <model>` header | No ambient mesh, so the trusted model header (normally stamped by the mesh route) is set explicitly. |
+| Operator host | `k0sctl`/`kubectl`/`helm`/Python on the host | **Docker only** — every tool is bundled in the workflow container | The T2 workflow runs exclusively inside its image. |
 
 ---
 
@@ -41,13 +66,13 @@ functionality and telemetry collection.
 | **k0sctl** | Open-source tool that bootstraps/removes k0s over SSH from a declarative `k0sctl.yaml` (host list, roles, key). Used for Phase 1 (create) and Phase 6 (`k0sctl reset`). |
 | **Adopted cluster** | The benchmark cluster registered into k0rdent as a managed `ClusterDeployment` (cf. the operator example `default-child-adopted`) so WorkspaceDeployments can target it. |
 | **ClusterDeployment** | k0rdent CRD representing a managed cluster. Here it points at the *adopted* local cluster (the deploy target for workspaces). |
-| **Infrastructure addons** | The **NVIDIA GPU operator** (device plugin + DCGM exporter) and the **monitoring stack** (Prometheus + Grafana) are installed by **direct `helm install`** into the cluster — *not* via k0rdent MCS/ServiceTemplates. |
-| **WorkspaceClass** | `workspaces.exalsius.ai/v1` cluster-scoped CRD binding a workspace-hub Helm template + default values (here `llm-inference`, template `llm-inference-workspace-2.0.0`, prereq `llm-d-stack`). |
-| **WorkspaceDeployment** | `workspaces.exalsius.ai/v1` CRD instantiating a WorkspaceClass onto the adopted cluster with `resources` + Helm `values`. The operator realises it (and its `llm-d-stack` prereq ServiceTemplate) as a Sveltos `ServiceSet` — this is the operator's own machinery, not something the benchmark authors. |
-| **llm-d** | The reference inference architecture behind the `llm-inference` workspace: an inference scheduler/gateway in front of one or more vLLM decode replicas. |
-| **Observability stack** | Open-source **Prometheus + Grafana** installed by direct `helm install` (`kube-prometheus-stack`), with the **NVIDIA DCGM exporter** and vLLM `/metrics`. Dashboards from `exalsius-grafana-dashboards`. (k0rdent's KOF / VictoriaMetrics is an OSS alternative; the SaaS observability is out of scope.) |
+| **Infrastructure addons** | The **NVIDIA GPU operator** (device plugin + DCGM exporter), **OpenEBS** (default StorageClass), and **k0rdent KOF** (VictoriaMetrics + OpenTelemetry collectors) are installed by **direct `helm install`** into the cluster — *not* via k0rdent MCS/ServiceTemplates. |
+| **WorkspaceClass** | `workspaces.exalsius.ai/v1` cluster-scoped CRD binding a workspace-hub Helm template + default values (here `llm-d-model-1-0-0` from workspace-hub 1.0.0, with prerequisite ServiceTemplate `llm-d-infra-1-0-0`). |
+| **WorkspaceDeployment** | `workspaces.exalsius.ai/v1` CRD instantiating a WorkspaceClass onto the adopted cluster with `resources` + Helm `values`. The operator realises it (and its `llm-d-infra` prereq ServiceTemplate) as a Sveltos `ServiceSet` — this is the operator's own machinery, not something the benchmark authors. |
+| **llm-d** | The reference inference architecture behind the workspace (llm-d 0.9.0): an inference gateway (agentgateway) + router/endpoint-picker in front of one or more vLLM model-server pods (a LeaderWorkerSet). |
+| **Observability stack** | Open-source **k0rdent KOF** — VictoriaMetrics (metrics storage) + OpenTelemetry collectors — installed by direct `helm install`, scraping the **NVIDIA DCGM exporter** (GPU-operator `ServiceMonitor`) and vLLM `/metrics` (a workflow-applied `PodMonitor`). Grafana ships with KOF; dashboards from `exalsius-grafana-dashboards`. (The SaaS observability API is out of scope; the VictoriaMetrics used here is the OSS KOF one.) |
 
-References: [exalsius-operator](https://github.com/exalsius/exalsius-operator) · [workspace-hub](https://github.com/exalsius/exalsius-workspace-hub) · [k0rdent](https://github.com/exalsius/k0rdent) · [k0rdent adopting clusters](https://docs.k0rdent.io/latest/admin/clusters/admin-adopting-clusters/) · [exalsius-grafana-dashboards](https://github.com/exalsius/exalsius-grafana-dashboards).
+References: [exalsius-operator](https://github.com/exalsius/exalsius-operator) · [workspace-hub](https://github.com/exalsius/exalsius-workspace-hub) · [k0rdent](https://github.com/exalsius/k0rdent) · [k0rdent KOF](https://docs.k0rdent.io/) · [k0rdent adopting clusters](https://docs.k0rdent.io/latest/admin/clusters/admin-adopting-clusters/) · [exalsius-grafana-dashboards](https://github.com/exalsius/exalsius-grafana-dashboards).
 
 ---
 
@@ -60,11 +85,12 @@ The benchmark is parameterised by a list of provided NVIDIA nodes. Each node MUS
 | Requirement | Assumption |
 |-------------|-----------|
 | Access | SSH reachable at `IP:Port` with a username and a private key the operator holds. |
-| GPU | **1× NVIDIA L40 (48 GB) per node**. The medium model (~16 GB bf16) fits one L40 with ample KV-cache headroom. Because there is **one GPU per node**, Scenario 3's `tensorParallelism: 2` is inherently a **cross-node** split. |
-| GPU software | NVIDIA driver ≥ 535 and the NVIDIA container runtime available. The in-cluster device plugin + DCGM exporter are provided by the NVIDIA GPU operator, installed by direct `helm install` in Phase 2. |
-| OS | Linux x86_64 (Ubuntu 22.04 LTS reference), passwordless `sudo` for the SSH user (k0s bootstrap). |
+| GPU | **1× NVIDIA GPU per node** (reference: **L40S** 48 GB, on Nebius `gpu-l40s-a`; also validated on H100 80 GB). The medium model (~16 GB bf16) fits one such GPU with ample KV-cache headroom. Because there is **one GPU per node**, Scenario 3's cross-node shard uses `nodesPerReplica: 2`. |
+| GPU software | No NVIDIA driver required on the node by default — the NVIDIA GPU operator (installed by direct `helm install` in Phase 2) installs one **≥ 580** (CUDA 13, required by the llm-d 0.9.0 model image) and the NVIDIA container runtime. If the node already has driver ≥ 580 pre-installed, `GPU_OPERATOR_DRIVER_ENABLED=false` uses it instead and skips operator-managed driver install. The in-cluster device plugin + DCGM exporter come from the same GPU operator install either way. |
+| OS | Linux x86_64 (Ubuntu 24.04 LTS reference), passwordless `sudo` for the SSH user (k0s bootstrap). |
+| Storage | No dynamic provisioner required on the node — the workflow installs **OpenEBS** as the default StorageClass in Phase 2 (KOF/VictoriaMetrics PVCs need one). |
 | Networking | SSH reachable from the operator host (for `k0sctl`); outbound internet (pull container images + model weights from Hugging Face). Node-to-node connectivity on the k0s ports (API 6443, konnectivity 8132, etc.) for the multi-node scenarios. |
-| Disk | ≥ 60 GB free (container images + model artifacts; the class requests 100 Gi storage). |
+| Disk | ≥ 60 GB free (container images + model artifacts; the class requests 50 Gi storage per replica). |
 
 > **Scenario node counts:** S1 → 1 node · S2 → 2 nodes · S3 → 2 nodes. See each scenario spec.
 > Because the cluster is self-contained, the **k0s control plane is co-located** on a provided
@@ -75,21 +101,18 @@ The benchmark is parameterised by a list of provided NVIDIA nodes. Each node MUS
 ### 2.2 Control / operator host
 
 The machine that drives the benchmark (laptop or CI runner). It holds **no pre-existing
-cluster** — the benchmark cluster is created on the provided nodes during the run. All tooling
-is open-source:
+cluster** — the benchmark cluster is created on the provided nodes during the run. The **only host
+requirement is Docker**: the T2 end-to-end workflow is containerised and bundles every tool it
+needs (`k0sctl`, `kubectl`, `helm`, `jq`, `envsubst`, `ssh`, `base64`). The operator supplies at
+runtime:
 
-- `k0sctl` — bootstrap/remove the k0s cluster over SSH on the provided nodes.
-- `kubectl` + `helm` ≥ 3.12 — install k0rdent/KCM + the `exalsius-operator` into that cluster,
-  and apply the benchmark CRDs.
 - The private SSH key for the provided nodes (used by `k0sctl`; passwordless `sudo` on nodes).
 - A **Hugging Face access token** with read access to the benchmark model (stored as a Secret
   and referenced from the `WorkspaceDeployment`).
-- Python ≥ 3.10 + `curl`/`jq` for the load client and metric queries; Docker/Podman (the
-  end-to-end workflow, T2, is containerised).
 
-> **No `exls` / SaaS.** The operator host never uses the `exls` CLI (which would require the
+> **No `exls` / SaaS.** The workflow never uses the `exls` CLI (which would require the
 > closed-source Exalsius SaaS API) — only `k0sctl`, `kubectl`, `helm`, and the benchmark's own
-> scripts.
+> scripts, all inside the container. The in-cluster load client is **aiperf**, run as a Job.
 
 ### 2.3 Model under test ("medium-sized LLM")
 
@@ -98,7 +121,7 @@ only the *deployment topology* changes between scenarios.
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
-| `MODEL_ID` | `Qwen/Qwen3-8B` | Open weights, no gated access; ~16 GB in bf16 → fits one L40 (48 GB). Overridable. |
+| `MODEL_ID` | `Qwen/Qwen3-8B` | Open weights, no gated access; ~16 GB in bf16 → fits one GPU. It is the single `model.name` the chart serves and clients send. Overridable. |
 | Precision | bf16 (vLLM default) | |
 | Context / max-model-len | 8192 | Held constant across scenarios. |
 
@@ -111,28 +134,34 @@ only the *deployment topology* changes between scenarios.
 
 ## 3. Deployment configuration conventions
 
-All scenarios instantiate the same **`llm-inference`** `WorkspaceClass` via a
-`WorkspaceDeployment`; they differ only in its `resources` and `values`:
+All scenarios instantiate the same **`llm-d-model-1-0-0`** `WorkspaceClass` via a
+`WorkspaceDeployment`; they differ only in its `resources` and one `values` field. The chart owns
+the vLLM workload (a **LeaderWorkerSet**) and reads the operator-injected `_exalsius.resources`
+directly — there is **no `resourceInjection`**. Topology is:
+
+```
+tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_REPLICA
+model copies         = REPLICAS / NODES_PER_REPLICA        (REPLICAS must be a whole multiple)
+```
 
 | Concept | `WorkspaceDeployment` field | S1 | S2 | S3 |
 |---------|-----------------------------|----|----|----|
 | Nodes in benchmark cluster | (`k0sctl.yaml` host count) | 1 | 2 | 2 |
-| Decode replicas | `spec.values.decode.replicas` | 1 | 2 | 1 |
-| Tensor parallelism | `spec.values.tensorParallelism` | 1 | 1 | 2 |
-| Multi-node inference | `spec.values.multinode` | false | false | **true** |
-| GPUs per replica | `spec.resources.perReplica.gpuCount` | 1 | 1 | 2 (1 per node) |
+| Replicas (pods) | `spec.resources.replicas` | 1 | 2 | 2 |
+| GPUs per pod | `spec.resources.perReplica.gpuCount` | 1 | 1 | 1 |
+| Pods per model copy | `spec.values.modelServer.nodesPerReplica` | 1 | 1 | 2 |
+| ⇒ model copies | `replicas / nodesPerReplica` | 1 | 2 | 1 |
+| ⇒ tensor-parallel size | `nodesPerReplica × gpuCount` | 1 | 1 | 2 |
 
-- **Single-node (S1):** one replica, one GPU. Baseline.
-- **Replicated (S2):** two independent replicas (one per node) behind the llm-d scheduler →
-  horizontal throughput / availability. Set `values.decode.replicas: 2`.
-- **Sharded (S3):** one replica whose weights are **tensor-parallel-split across two nodes**
-  (`values.multinode: true`, `values.tensorParallelism: 2`, `perReplica.gpuCount: 2`). Tests
-  the cross-node sharding path.
+- **Single-node (S1):** one pod, one GPU, one model copy (TP=1). Baseline.
+- **Replicated (S2):** two independent pods (one model each) behind the llm-d router →
+  horizontal throughput / availability.
+- **Sharded (S3):** two pods that together serve **one** model, tensor-parallel-split across the
+  two nodes (`nodesPerReplica: 2`). Tests the cross-node sharding path (a LeaderWorkerSet of size 2).
 
-The llm-d value keys (`decode.replicas`, `tensorParallelism`, `multinode`) are supplied through
-the `WorkspaceDeployment.spec.values` passthrough to the `llm-inference-workspace-2.0.0` chart.
-There is no manual `helm` editing — the T2 workflow templates the CRD from scenario config, and
-pins the exact chart value keys during implementation (see §9).
+The model is set with `spec.values.model.name` (the Hugging Face repo id) and the accelerator with
+`spec.resources.perReplica.gpuVendor: NVIDIA` (which lets the operator inject the GPU resource
+name). There is no manual `helm` editing — the T2 workflow templates the CRD from scenario config.
 
 ### 3.1 Canonical parameters (env-driven)
 
@@ -145,72 +174,74 @@ KCM_NAMESPACE           # e.g. kcm-system
 NODE_ENDPOINTS          # comma-separated ip:port list (provided SSH nodes)
 SSH_USERNAME
 SSH_KEY_PATH            # used by k0sctl to bootstrap k0s over SSH
-KUBECONFIG_OUT          # path where Phase 1 writes the benchmark cluster's kubeconfig
 HF_TOKEN                # Hugging Face read token
-MODEL_ID                # default Qwen/Qwen3-8B
+MODEL_ID                # default Qwen/Qwen3-8B (the model.name served/routed on)
 WORKSPACE_NAME          # e.g. s1-single-node
-GPU_COUNT_PER_REPLICA   # 1 | 1 | 2
-DECODE_REPLICAS         # 1 | 2 | 1
-TENSOR_PARALLELISM      # 1 | 1 | 2
-MULTINODE               # false | false | true
+GPU_VENDOR              # NVIDIA (resolves the GPU resource name)
+GPU_COUNT_PER_REPLICA   # GPUs per pod:            1 | 1 | 1
+REPLICAS                # model-server pods:       1 | 2 | 2
+NODES_PER_REPLICA       # pods per model copy:     1 | 1 | 2
+WORKSPACE_CPU           # per-pod CPU request (default 2, well below the class default of 8)
 ```
 
 ---
 
 ## 4. End-to-end execution flow (common)
 
-Every scenario runs the same phased flow. The reusable implementation is delivered in **T2**;
-this section defines the contract each phase must satisfy.
+Every scenario runs the same phased flow, implemented in **T2** (`workflow/`). All phases act on
+the **one** benchmark cluster (mgmt == target), sharing one artifact directory
+`runs/<scenario>/<run-id>/`.
 
-All phases act on the **one** benchmark cluster (mgmt == target).
+| Phase | Purpose | Reference actions | Produces |
+|-------|---------|-------------------|----------|
+| **0. Preflight** | Validate inputs + host: tooling present, SSH reachability + passwordless sudo to every node, node count, low-level PCI GPU probe, no prior cluster of this name. | `ssh … true`; PCI probe | `preflight.log` |
+| **1. Bootstrap cluster** | Template `k0sctl.yaml` from the node list, tune node limits, bring up k0s on the provided SSH nodes; export the kubeconfig. | `k0sctl apply`; `k0sctl kubeconfig` | benchmark kubeconfig, `bootstrap.log` |
+| **2. Prepare cluster** | `helm install` **OpenEBS** (default StorageClass), Gateway API CRDs, the **NVIDIA GPU operator**, **k0rdent/KCM** (+ provider trim), **KOF** (VictoriaMetrics + OTel collectors), and the **`exalsius-operator`**; **adopt** the cluster (→ `ClusterDeployment`); register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). Wait until GPUs are schedulable. | `helm upgrade --install …`; `kubectl apply`; `kubectl wait` | `prepare.log` |
+| **3. Deploy workspace** | Render + apply the scenario `WorkspaceDeployment`; wait for the model's workspace namespace to appear; apply the vLLM `PodMonitor`; discover the endpoint. | `kubectl apply`; `kubectl get ns` (polled) | `endpoint.env`, `deploy.log` |
+| **4. Execute** | Functional probe (in-cluster curl to the gateway with the model header), then the standard inference load via an **aiperf** Job in-cluster. | curl pod; aiperf Job | `results/functional.json`, `results/aiperf.json`, `load.log` |
+| **5. Collect** | Snapshot the required telemetry from **VictoriaMetrics** (`vmselect`), gather logs, write the run report. Fails if any required series is missing, or if the `WorkspaceDeployment`'s Ready/Available condition never reads `True`. | VM query API; `kubectl logs`; `kubectl get workspacedeployment` (polled) | `metrics/*.json`, `run-report.md` |
+| **6. Cleanup** | Delete the WorkspaceDeployment + ClusterDeployment, then **destroy the whole cluster** (`k0sctl reset`) so the nodes return to a clean state. | `kubectl delete`; `k0sctl reset` | `cleanup.log` |
 
-| Phase | Purpose | Reference actions (k0sctl/kubectl/helm/scripts) | Produces |
-|-------|---------|-------------------------------------------------|----------|
-| **0. Preflight** | Validate operator host + inputs: `k0sctl`/`kubectl`/`helm` present, SSH reachability to every node, HF token valid, no prior cluster of this name. | `k0sctl version`; `ssh -p <port> <user>@<ip> true` | `preflight.log` |
-| **1. Bootstrap cluster** | Template `k0sctl.yaml` from the node list and bring up k0s on the provided SSH nodes; export the kubeconfig. | `k0sctl apply --config k0sctl.yaml`; `k0sctl kubeconfig > $KUBECONFIG_OUT` | benchmark kubeconfig, `bootstrap.log` |
-| **2. Prepare cluster** | `helm install` the **NVIDIA GPU operator** and the **monitoring stack** (Prometheus/Grafana) directly; `helm install` k0rdent/KCM + `exalsius-operator`; **adopt** the cluster (→ `ClusterDeployment`); apply the `llm-inference` `WorkspaceClass` (its `llm-d-stack` prereq is handled by the operator). Wait until GPUs are schedulable and monitoring is up. | `helm install gpu-operator nvidia/gpu-operator ...`; `helm install monitoring prometheus-community/kube-prometheus-stack ...`; `helm install kcm ...`; `helm install exalsius-operator ...`; `kubectl apply -f adopt-cluster.yaml workspace-class.yaml`; `kubectl wait` | `prepare.log` |
-| **3. Deploy workspace** | Apply a `WorkspaceDeployment` (scenario `values`/`resources`) referencing the adopted cluster; wait until the llm-d endpoint is ready. | `kubectl apply -f workspacedeployment.yaml`; `kubectl wait` | endpoint URL, `deploy.log` |
-| **4. Execute** | Health-check the OpenAI-compatible endpoint (port-forward/Service), then run the standard inference load. | benchmark client (T2) against `/v1/chat/completions` | `results/*.json`, `load.log` |
-| **5. Collect** | Snapshot telemetry (PromQL against the in-cluster Prometheus), logs, and the Grafana dashboard. | Prometheus HTTP query API; `kubectl logs`; export Grafana panels | `metrics/*.json`, `run-report.md` |
-| **6. Cleanup** | Delete the WorkspaceDeployment, then **destroy the whole cluster** so the nodes return to a clean state (individual `helm uninstall`s are unnecessary — `k0sctl reset` removes everything). | `kubectl delete workspacedeployment <ws>`; `k0sctl reset --config k0sctl.yaml` | `cleanup.log` |
-
-**Idempotency & clean state:** phase 0 fails fast if a cluster/WorkspaceDeployment of the same
-name already exists; phase 6 (`k0sctl reset`) is safe to run repeatedly and must leave **nothing
-benchmark-created on the nodes** — no k0s, operators, or workloads. Reproducibility
-(T3.2/T4.2/T5.2) requires **two consecutive clean runs** from an empty starting state (bare
-nodes → full run → bare nodes, twice).
+**Idempotency & clean state:** phase 0 fails fast if a cluster of the same name already exists;
+phase 6 (`k0sctl reset`, operating only on this run's `k0sctl.yaml`) is safe to run repeatedly and
+must leave **nothing benchmark-created on the nodes**. Note that `k0sctl reset` does not reboot the
+node, so it does not guarantee a literal bare-metal state (k0s state or NVIDIA driver modules can
+persist across a reset without a reboot — see k0s's and NVIDIA's own uninstall/reset guidance).
+Reproducibility (T3.2/T4.2/T5.2) requires **two consecutive clean runs** on the same prepared host
+(fresh k0s cluster → full run → cluster torn down, twice), not on a rebooted/bare node.
 
 ### 4.1 Standard inference workload
 
 To make scenarios comparable, all use the same request workload against the OpenAI-compatible
-endpoint exposed by the llm-d scheduler:
+endpoint (the shared agentgateway, with the `X-Gateway-Model-Name` header), driven by **aiperf**
+run in-cluster as a Kubernetes Job:
 
-- **Functional probe:** a single fixed prompt with a deterministic decoding config
+- **Functional probe:** a single fixed prompt with deterministic decoding
   (`temperature=0`, `max_tokens=128`); the completion is captured as a result artifact.
-- **Load probe:** a fixed request mix — `N_PROMPTS=200`, input ≈ 512 tokens, output = 128
-  tokens, at a target concurrency `CONCURRENCY` (default 16). Reports throughput (tokens/s),
-  TTFT, and end-to-end latency percentiles.
+- **Load probe (aiperf):** `LOAD_N_PROMPTS=200` requests, input ≈ 512 tokens, output = 128 tokens,
+  target concurrency `LOAD_CONCURRENCY` (default 16), with a warm-up. Reports throughput
+  (tokens/s), TTFT, inter-token latency, and end-to-end latency percentiles.
 
 ---
 
 ## 5. Expected outputs (common)
 
-Each run produces a self-contained, timestamped artifact directory:
+Each run produces a self-contained artifact directory:
 
 ```
-runs/<scenario>/<UTC-timestamp>/
-├── config.env                 # exact parameters used
-├── k0sctl.yaml                # rendered cluster topology for this run
-├── preflight.log
-├── bootstrap.log  prepare.log  deploy.log  cleanup.log
+runs/<scenario>/<run-id>/
+├── config.env                 # exact parameters used (secrets excluded)
+├── phases.tsv                 # per-phase status ledger
+├── preflight.log bootstrap.log prepare.log deploy.log load.log cleanup.log
+├── manifests/                 # rendered k0sctl.yaml + applied CRDs (HF token redacted)
 ├── results/
 │   ├── functional.json        # prompt + completion of the functional probe
-│   └── load.json              # latency/throughput summary
+│   ├── aiperf.json            # aiperf load summary export
+│   └── aiperf.log             # aiperf Job pod log
 ├── metrics/
-│   ├── vllm.json              # vllm:* series snapshot
-│   ├── gpu.json               # DCGM_FI_DEV_* series snapshot
-│   └── deployment.json        # provisioning/deploy timings + status
-└── run-report.md              # human-readable summary + pass/fail vs acceptance criteria
+│   ├── _present.txt / _missing.txt   # telemetry acceptance gate
+│   └── <series>.json          # snapshot of each required metric series
+└── run-report.md              # human-readable summary + functional pass/fail + recorded perf
 ```
 
 ---
@@ -218,53 +249,58 @@ runs/<scenario>/<UTC-timestamp>/
 ## 6. Required metrics (common baseline)
 
 Full definitions, units, labels, and interpretation are the subject of **T6.1**; this section
-fixes the **minimum required series** every scenario must collect. Sources:
-vLLM (`/metrics`, `vllm:` prefix), the NVIDIA DCGM exporter, and node-exporter/kubelet — all
-scraped by the benchmark cluster's **Prometheus** (installed by direct `helm install` of
-`kube-prometheus-stack`) through `ServiceMonitor`/`PodMonitor`, and visualised in **Grafana**.
+fixes the **minimum required series** every scenario must collect. Sources: vLLM (`/metrics`,
+`vllm:` prefix, via a workflow-applied `PodMonitor`), the NVIDIA DCGM exporter (GPU-operator
+`ServiceMonitor`) — both scraped by the **KOF collectors** into **VictoriaMetrics**, and visualised
+in **Grafana**. The collect phase gates on these exact series being present and non-empty:
 
 | Category | Metric (series) | Unit | Purpose |
 |----------|-----------------|------|---------|
-| **Deployment status** | cluster provision duration; workspace deploy→ready duration; final status (`Ready`); operator-exported reconciliation metrics | s / enum | Provisioning success & speed |
 | **Infra utilisation** | `DCGM_FI_DEV_GPU_UTIL` | % | GPU compute utilisation per GPU |
-| | `DCGM_FI_DEV_FB_USED` / `DCGM_FI_DEV_FB_FREE` | MiB | GPU memory footprint (validates model fit / shard split) |
+| | `DCGM_FI_DEV_FB_USED` | MiB | GPU memory footprint (validates model fit / shard split) |
 | | `DCGM_FI_DEV_POWER_USAGE` | W | Power draw |
-| | node CPU / memory (node-exporter) | %, bytes | Host pressure |
-| **Inference execution** | `vllm:time_to_first_token_seconds` | s | Latency (TTFT) |
-| | `vllm:e2e_request_latency_seconds` | s | End-to-end request latency |
+| **Inference execution** | `vllm:num_requests_running` | count | In-flight requests / saturation |
+| | `vllm:time_to_first_token_seconds_count` | count | TTFT sample count (latency histogram) |
+| | `vllm:e2e_request_latency_seconds_count` | count | End-to-end request-latency sample count |
 | | `vllm:generation_tokens_total` | tokens | Output token throughput (rate) |
-| | `vllm:num_requests_running` / `vllm:num_requests_waiting` | count | Queue depth / saturation |
-| | `vllm:gpu_cache_usage_perc` | % | KV-cache pressure |
-| **Operator/control-plane** | exalsius-operator + k0rdent controller metrics exported to the cluster | — | Verify T6.2 export reliability (open-source operator metrics, in place of the SaaS `exalsius-api`) |
+| | `vllm:kv_cache_usage_perc` | ratio | KV-cache pressure (renamed from `gpu_cache_usage_perc` in vLLM ≥0.9) |
+| **Deployment status** | phase timings from `phases.tsv` (provision/deploy→ready durations) | s | Provisioning success & speed |
 | **Scenario-specific** | see each scenario spec | | Replication balance (S2), shard split (S3) |
+
+> Recorded performance values (throughput, TTFT, latency percentiles) come from the aiperf export
+> and are written into `run-report.md`; they are **reported, not gated**.
 
 ---
 
 ## 7. Acceptance criteria (common)
 
 The acceptance criteria are **functional**: a run passes on whether the scenario provisions,
-serves, and is observable — not on hitting performance targets. Performance figures (throughput,
-latency, GPU-memory footprint) are **recorded and reported** in the run artifacts, but are
-**not pass/fail gates**. A scenario run **passes** iff all of the following hold (scenario specs
-add functional criteria of their own):
+serves, and is observable — not on hitting performance targets. Performance figures are
+**recorded and reported** in the run artifacts, but are **not pass/fail gates**. A scenario run
+**passes** iff all of the following hold (scenario specs add functional criteria of their own):
 
 1. **Provisioning.** `k0sctl` brings up k0s on the SSH nodes; the cluster is adopted
-   (`ClusterDeployment` `Ready`) with GPUs schedulable and monitoring up; the
-   `WorkspaceDeployment` reaches ready — evidenced by logs.
+   (`ClusterDeployment` `Ready`) with GPUs schedulable; the model's workspace namespace appears —
+   evidence that the `WorkspaceDeployment` has moved past the shared `llm-d-infra` prerequisite and
+   applied the model's `ServiceSet`. Deploy-phase **sequencing** waits on this namespace signal
+   rather than the `WorkspaceDeployment`'s own `Available`/`Ready` condition, because that condition
+   can report `True` while the shared prerequisite is still installing — gating sequencing on it
+   would let a run proceed before the model's `ServiceSet` even exists. The condition is still a
+   hard pass/fail requirement, just checked later: the collect phase polls it (bounded, once the
+   model has already been proven serving per criterion 2) and **fails the run** if it never reads
+   `True`, recording the observed status in `run-report.md`.
 2. **Functionality.** The OpenAI-compatible endpoint returns a valid, non-empty completion for
-   the functional probe prompt (HTTP 200, coherent text, expected model id in the response).
-3. **Serving stability.** The load probe completes with a **0% error rate** (every request
-   returns a valid response). The throughput and latency it measures are recorded, not gated.
-4. **Telemetry.** Every metric series in §6 is **present and non-empty** in the benchmark
-   cluster's Prometheus for the run window, and visible in Grafana (T6.4). Operator/k0rdent
-   control-plane metrics are exported to the cluster (T6.2).
+   the functional probe prompt (HTTP 200, coherent text, expected model id).
+3. **Serving stability.** The aiperf load probe completes with a **0% error rate**. Its throughput
+   and latency are recorded, not gated.
+4. **Telemetry.** Every metric series in §6 is **present and non-empty** in VictoriaMetrics for the
+   run window (the collect phase fails otherwise), and visible in Grafana (T6.4).
 5. **Reproducibility.** **Two consecutive** clean-state runs both pass, with stored logs,
    config, and result artifacts per §5.
-6. **Cleanup.** Phase 6 (`k0sctl reset`) destroys the cluster and leaves the nodes bare — no k0s,
-   operators, or workloads remain; the nodes are ready for the next clean run.
+6. **Cleanup.** Phase 6 (`k0sctl reset`) destroys the cluster on the nodes (not a reboot; see §4's
+   idempotency note).
 
-> Phase timings (see each scenario's *Indicative timings*) are informational expectations used to
-> spot regressions and size CI — they are **not** acceptance gates.
+> Phase timings (see each scenario's *Indicative timings*) are informational — **not** gates.
 
 ---
 
@@ -275,12 +311,15 @@ add functional criteria of their own):
 
 ### 8.1 Known limitations of the self-contained topology
 
-- **Control-plane co-location:** the k0s control plane, k0rdent/KCM, the operator, and the
-  monitoring stack all run on the provided GPU node(s) alongside the workload. This consumes
-  CPU/RAM (and a little GPU-node scheduling capacity) that a dedicated management cluster would
-  offload — a deliberate trade-off for compactness. Metrics are interpreted with this in mind.
+- **Control-plane co-location:** the k0s control plane, k0rdent/KCM, the operator, and KOF all run
+  on the provided GPU node(s) alongside the workload. This consumes CPU/RAM (and a little
+  GPU-node scheduling capacity) that a dedicated management cluster would offload — a deliberate
+  trade-off for compactness (hence `WORKSPACE_CPU` defaults to 2, well below the class default of 8,
+  and the KCM provider list is trimmed to `projectsveltos` only — no k0smotron, as the cluster is
+  adopted, not CAPI-provisioned).
 - **No management-plane persistence:** because the whole cluster is destroyed at cleanup, k0rdent
-  state and historical metrics do not survive a run; result artifacts (§5) are the durable record.
+  state and historical metrics do not survive a run; result artifacts (§5) are the durable record
+  (KOF/VictoriaMetrics retention is deliberately short).
 - **S1 single-node** runs control plane + workload on one machine; if that node lacks headroom
   for both k0s/monitoring and the model, reduce monitoring scope or model size.
 
@@ -288,25 +327,22 @@ add functional criteria of their own):
 
 ## 9. Assumptions & dependencies
 
-This specification is complete and self-contained. The following are firm assumptions and
-dependencies; the concrete artifacts and pinned versions that satisfy them are produced by the
-**T2** end-to-end workflow (implementation), not decided here.
+The concrete artifacts and pinned versions that satisfy these are produced by the **T2** workflow.
 
-- **Nodes.** Each provided node has a **single NVIDIA L40 (48 GB)** GPU, reachable over SSH with
-  passwordless `sudo`. Each scenario is provided exactly the nodes it needs (S1: 1, S2/S3: 2) and
-  provisions a fresh cluster on them.
+- **Nodes.** Each provided node has a **single NVIDIA GPU** (L40S 48 GB reference; H100 validated),
+  driver ≥ 580, reachable over SSH with passwordless `sudo`. Each scenario gets exactly the nodes it
+  needs (S1: 1, S2/S3: 2) and provisions a fresh cluster on them.
 - **Model.** All scenarios serve `MODEL_ID` (default `Qwen/Qwen3-8B`); it fits one GPU, so S3
-  exercises the cross-node sharding path demonstratively (see the Scenario 3 known limitations).
-- **Cluster bootstrap.** The benchmark cluster is created with **k0s via `k0sctl`**; the exact
-  `k0sctl`/k0s versions are pinned by the T2 workflow.
-- **Cluster management.** The cluster is **adopted into k0rdent** (yielding a `ClusterDeployment`)
-  to serve as the deploy target for the `WorkspaceDeployment`; the T2 workflow provides the
-  adoption manifests.
-- **Addons.** The **NVIDIA GPU operator** and **`kube-prometheus-stack`** are installed by direct
+  exercises the cross-node sharding path demonstratively.
+- **Cluster bootstrap.** k0s via `k0sctl` (versions pinned by the T2 workflow; k0s ≥ 1.32 is
+  required by KCM's flux pre-check).
+- **Cluster management.** The cluster is **adopted into k0rdent** (yielding a `ClusterDeployment`);
+  the T2 workflow provides the adoption manifests.
+- **Addons.** **OpenEBS**, the **NVIDIA GPU operator**, and **k0rdent KOF** are installed by direct
   `helm install` at versions pinned by the T2 workflow.
-- **Workspace.** Scenario topology is expressed entirely through `WorkspaceDeployment`
-  `resources`/`values` against the `llm-inference` `WorkspaceClass` (`decode.replicas`,
-  `tensorParallelism`, `multinode`, `perReplica.gpuCount`); the T2 workflow pins the exact chart
-  value keys for the deployed `llm-inference-workspace-2.0.0` version.
-- **Telemetry retention.** Prometheus retention is short (the cluster is ephemeral); required
+- **Workspace.** Scenario topology is expressed through `WorkspaceDeployment` `resources`/`values`
+  against the `llm-d-model-1-0-0` WorkspaceClass (`replicas`, `perReplica.gpuCount`,
+  `perReplica.gpuVendor`, `modelServer.nodesPerReplica`); the prerequisite `llm-d-infra-1-0-0` is
+  auto-installed by the operator.
+- **Telemetry retention.** VictoriaMetrics retention is short (the cluster is ephemeral); required
   metrics are snapshotted into run artifacts during Phase 5, which are the durable record.
