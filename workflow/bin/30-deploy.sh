@@ -45,26 +45,6 @@ phase_deploy() {
          "$RUN_DIR/manifests/vllm-podmonitor.yaml"
   run kc apply -f "$RUN_DIR/manifests/vllm-podmonitor.yaml" 2>&1 | tee -a "$logf"
 
-  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its
-  # router subchart only scrapes the endpoint-picker), so apply our own
-  # PodMonitor. This must come AFTER the workspace is ready: the operator creates
-  # the model's namespace (ws-<workspace>) asynchronously, so it does not exist
-  # right after the WorkspaceDeployment is applied. The KOF collectors'
-  # target-allocator discovers it and scrapes the model's vllm:* metrics into
-  # VictoriaMetrics (the collect phase gates on them).
-  if [[ "${DRY_RUN:-0}" != "1" ]]; then
-    wait_for "$TIMEOUT_WORKSPACE" "workspace namespace ${WORKSPACE_SERVICE_NAMESPACE} present" \
-      bash -c 'KUBECONFIG="'"$KUBECONFIG_OUT"'" kubectl get ns "'"$WORKSPACE_SERVICE_NAMESPACE"'"'
-  fi
-
-  # The 1.0.0 llm-d-model chart ships no scrape object for the vLLM pods (its router subchart only
-  # scrapes the endpoint-picker), so apply our own PodMonitor now that the namespace exists. The KOF
-  # collectors' target-allocator discovers it and scrapes the model's vllm:* metrics into
-  # VictoriaMetrics (the collect phase gates on them).
-  render "$WORKFLOW_ROOT/templates/vllm-podmonitor.yaml.tmpl" \
-         "$RUN_DIR/manifests/vllm-podmonitor.yaml"
-  run kc apply -f "$RUN_DIR/manifests/vllm-podmonitor.yaml" 2>&1 | tee -a "$logf"
-
   kc -n "$WORKSPACE_NAMESPACE" get workspacedeployment "$WORKSPACE_NAME" -o yaml \
     > "$RUN_DIR/manifests/workspacedeployment.status.yaml" 2>/dev/null || true
   # The live CR echoes the token back in spec.values — redact the dump too.
