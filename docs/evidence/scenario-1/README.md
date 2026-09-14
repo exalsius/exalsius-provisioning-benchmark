@@ -7,9 +7,11 @@ file:
 - `../scenario-1.tar.gz` — sanitized artifacts of two consecutive clean runs
   (`run-1/`, `run-2/`), tracked via Git LFS (see repo `.gitattributes`).
 
-> **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-03, both meeting the
-> functional acceptance criteria (T3.2). run-2 started 1 s after run-1's cleanup tore down the k0s
-> cluster on the same node — consecutive from a fresh cluster, not a rebooted/bare node (see
+> **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-14, both meeting the
+> functional acceptance criteria (T3.2), including the `WorkspaceDeployment` Ready/Available hard
+> gate added after the original 2026-09-03 evidence (this evidence supersedes that run — see below).
+> run-2 started 1 s after run-1's cleanup tore down the k0s cluster on the same node — consecutive
+> from a fresh cluster, not a rebooted/bare node (see
 > [`../../scenarios/scenario-1.md` §6](../../scenarios/scenario-1.md#6-known-limitations)).
 
 ## What the tarball contains (per run)
@@ -46,12 +48,12 @@ Operator installed one during `prepare`, confirmed by both runs' `prepare.log`
 
 | Run | Workflow commit | Node / GPU | Model | Start (UTC) | Duration | Verdict |
 |-----|-----------------|------------|-------|-------------|----------|---------|
-| run-1 | `feat/t3` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-03T04:40:18Z | ~23 min | **PASS** |
-| run-2 | `feat/t3` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-03T05:03:39Z | ~24 min | **PASS** |
+| run-1 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-14T09:08:57Z | ~25 min | **PASS** |
+| run-2 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-14T09:33:46Z | ~31 min | **PASS** |
 
-† Runs were produced from the `feat/t3` branch (tip `4b3d796` plus the deploy/scheduling and
-sanitization fixes staged on that branch). Update to the merged commit SHA when the branch is pushed
-(this is the "permanent link to the commit" the T3.1/T3.2 acceptance points at).
+† Runs were produced from `main` (tip `e0cbb98`, the merged T3+T4 implementation) plus the
+WorkspaceDeployment-ready gate, EPP-discovery gate, A2.2 delta check, and doc/dedup fixes staged for
+commit alongside this evidence update. Update to the exact commit SHA once committed.
 
 ## Acceptance (both runs)
 
@@ -61,19 +63,21 @@ sanitization fixes staged on that branch). Update to the merged commit SHA when 
 | Functional probe — non-empty completion | ✅ pass | ✅ pass |
 | aiperf load — 0 request errors (`error_summary: []`) | ✅ | ✅ |
 | Required metric series present (0 missing) | ✅ | ✅ |
-| One serving pod on one GPU — `DCGM_FI_DEV_FB_USED` non-zero (A1.1/A1.2) | ✅ 43634 MiB | ✅ |
+| `WorkspaceDeployment` Ready/Available condition `True` | ✅ | ✅ |
+| Replica received load traffic (per-pod delta over the aiperf window) | ✅ 1/1 | ✅ 1/1 |
+| One serving pod on one GPU — `DCGM_FI_DEV_FB_USED` non-zero (A1.1/A1.2) | ✅ 43634 MiB | ✅ 43634 MiB |
 | Cleanup — `k0sctl reset` tears down the k0s cluster | ✅ | ✅ |
 
 ## Recorded baseline (reported, not gated)
 
 | Metric | run-1 | run-2 |
 |---|---|---|
-| Output token throughput | 134.24 tok/s | 129.05 tok/s |
-| Request throughput | 1.05 req/s | 1.01 req/s |
-| TTFT p50 / p90 | 6401.65 / 6439.90 ms | 6784.06 / 6818.52 ms |
-| Request latency (e2e) p50 / p90 | 9507.07 / 9529.52 ms | 9890.80 / 9911.67 ms |
-| Inter-token latency p50 | 24.46 ms | 24.46 ms |
+| Output token throughput | 135.59 tok/s | 134.40 tok/s |
+| Request throughput | 1.06 req/s | 1.05 req/s |
+| TTFT p50 / p90 | 6305.46 / 6339.38 ms | 6391.48 / 6425.62 ms |
+| Request latency (e2e) p50 / p90 | 9410.92 / 9434.53 ms | 9497.00 / 9517.81 ms |
+| Inter-token latency p50 | 24.46 ms | 24.45 ms |
 | Output sequence length | 128 tokens | 128 tokens |
 
-The two runs agree within ~4% on throughput and latency — the single-node baseline S2/S3 are
+The two runs agree within ~1% on throughput and latency — the single-node baseline S2/S3 are
 compared against.

@@ -36,10 +36,11 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 | **S3 sharded** | ⬜ (T5) | ⬜ | ⬜ | ⬜ | 🟡 [draft](docs/specs/scenario-3-sharded.md) |
 
 Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
-runs on 2026-09-03 (baseline ~131 tok/s, TTFT p50 ~6.5 s), under
+runs on 2026-09-14 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
 [`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
-(2026-09-07), load-balanced across both replicas, with **reproducible ~2.85× throughput scaling** over
-S1 under least-busy endpoint-picker routing (see the evidence).
+(2026-09-14), load-balanced across both replicas, with **reproducible ~2.7× throughput scaling** over
+S1 under least-busy endpoint-picker routing — both scenarios' runs pass the WorkspaceDeployment-ready,
+EPP-discovery, and (S2) per-replica-traffic delta gates (see the evidence).
 
 ## Quickstart
 
@@ -77,5 +78,5 @@ Scenario 1 (T3) is the **reference implementation** — implemented, verified (t
 and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
 readiness refinement so load waits for both replicas and a least-busy endpoint-picker routing
 default; it is implemented, documented, and verified by two consecutive PASS runs with reproducible
-~2.85× throughput scaling over S1. Scenario 3 (T5) is not started. A published documentation page is
+~2.7× throughput scaling over S1. Scenario 3 (T5) is not started. A published documentation page is
 a follow-up.

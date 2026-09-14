@@ -143,8 +143,8 @@ series from the workflow-applied `PodMonitor`.
   `DCGM_FI_DEV_FB_USED` non-zero on exactly one GPU (verified: **43634 MiB** on one NVIDIA L40S — the
   model plus vLLM's KV-cache reservation at `gpu-memory-utilization 0.95`); **A1.3** baseline
   throughput/TTFT recorded for S2/S3 comparison.
-- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): ~131 tok/s output throughput, TTFT
-  p50 ~6.5 s, e2e latency p50 ~9.7 s, the two runs within ~4% of each other. This single-node
+- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): ~135 tok/s output throughput, TTFT
+  p50 ~6.3 s, e2e latency p50 ~9.5 s, the two runs within ~1% of each other. This single-node
   baseline is what S2 (throughput scaling) and S3 (sharding overhead) will be measured against.
   Per-run figures: [`../evidence/scenario-1/`](../evidence/scenario-1/).
 

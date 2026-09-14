@@ -81,10 +81,10 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
     enough on its own, since it would also count whatever the functional probe sent to a single pod
     before aiperf ever started.
   - **A2.3** both GPUs loaded — `DCGM_FI_DEV_FB_USED` non-zero for **both** `Hostname`s in `metrics/DCGM_FI_DEV_FB_USED.json`.
-  - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~131 tok/s), expected to exceed it.
+  - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~135 tok/s), expected to exceed it.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
-  replicas and passed every functional gate, with **reproducible ~2.85× scaling** over the S1
-  baseline — run-1 369 tok/s, run-2 375 tok/s (within ~2%), TTFT p50 ~300 ms. This relies on
+  replicas and passed every functional gate, with **reproducible ~2.7× scaling** over the S1
+  baseline — run-1 373 tok/s, run-2 368 tok/s (within ~1.4%), TTFT p50 ~350 ms. This relies on
   least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow
   default); the chart's prefix-cache-affinity default concentrates load and does not reproduce.
   Full per-run data: [`../evidence/scenario-2/`](../evidence/scenario-2/).
