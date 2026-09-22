@@ -1,18 +1,19 @@
 # Scenario 1 — verification evidence
 
-This directory indexes the committed reproducibility evidence for **Scenario 1
-(single-node)**. The raw run artifacts live in a Git LFS tarball alongside this
-file:
+Indexes the committed reproducibility evidence for **Scenario 1 (single-node)**. Raw run artifacts
+live in a Git LFS tarball alongside this file:
 
-- `../scenario-1.tar.gz` — sanitized artifacts of two consecutive clean runs
-  (`run-1/`, `run-2/`), tracked via Git LFS (see repo `.gitattributes`).
+- `../scenario-1.tar.gz` — sanitized artifacts of two consecutive clean runs (`run-1/`, `run-2/`),
+  tracked via Git LFS (see repo `.gitattributes`).
 
-> **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-14, both meeting the
-> functional acceptance criteria (T3.2), including the `WorkspaceDeployment` Ready/Available hard
-> gate added after the original 2026-09-03 evidence (this evidence supersedes that run — see below).
-> run-2 started 1 s after run-1's cleanup tore down the k0s cluster on the same node — consecutive
-> from a fresh cluster, not a rebooted/bare node (see
+> **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-22, both meeting the
+> functional acceptance criteria (T3.2): the `WorkspaceDeployment` Ready/Available hard gate and the
+> pod-placement hard gate (trivial with one pod — `results/pod-placement.txt`) both passed. run-2
+> started 2 s after run-1's cleanup tore down the k0s cluster on the same node — consecutive from a
+> fresh cluster, not a rebooted/bare node (see
 > [`../../scenarios/scenario-1.md` §6](../../scenarios/scenario-1.md#6-known-limitations)).
+> `GPU_MEMORY_UTILIZATION=0.85` (set in `workflow/config/common.env`, shared across all three
+> scenarios so `DCGM_FI_DEV_FB_USED` stays comparable between them).
 
 ## What the tarball contains (per run)
 
@@ -48,12 +49,11 @@ Operator installed one during `prepare`, confirmed by both runs' `prepare.log`
 
 | Run | Workflow commit | Node / GPU | Model | Start (UTC) | Duration | Verdict |
 |-----|-----------------|------------|-------|-------------|----------|---------|
-| run-1 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-14T09:08:57Z | ~25 min | **PASS** |
-| run-2 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-14T09:33:46Z | ~31 min | **PASS** |
+| run-1 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:22:36Z | ~23 min | **PASS** |
+| run-2 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:45:43Z | ~23 min | **PASS** |
 
-† Runs were produced from `main` (tip `e0cbb98`, the merged T3+T4 implementation) plus the
-WorkspaceDeployment-ready gate, EPP-discovery gate, A2.2 delta check, and doc/dedup fixes staged for
-commit alongside this evidence update. Update to the exact commit SHA once committed.
+† Runs were produced ahead of merge, from the branch that adds the pod-placement hard gate and the
+shared `GPU_MEMORY_UTILIZATION=0.85` default. Update to the exact `main` commit SHA once merged.
 
 ## Acceptance (both runs)
 
@@ -65,19 +65,21 @@ commit alongside this evidence update. Update to the exact commit SHA once commi
 | Required metric series present (0 missing) | ✅ | ✅ |
 | `WorkspaceDeployment` Ready/Available condition `True` | ✅ | ✅ |
 | Replica received load traffic (per-pod delta over the aiperf window) | ✅ 1/1 | ✅ 1/1 |
-| One serving pod on one GPU — `DCGM_FI_DEV_FB_USED` non-zero (A1.1/A1.2) | ✅ 43634 MiB | ✅ 43634 MiB |
+| Pod placement — trivial with one pod (`results/pod-placement.txt`) | ✅ | ✅ |
+| **A1.1** exactly one serving pod | ✅ | ✅ |
+| **A1.2** `DCGM_FI_DEV_FB_USED` non-zero on the single GPU (MiB) | ✅ 39098 | ✅ 39098 |
 | Cleanup — `k0sctl reset` tears down the k0s cluster | ✅ | ✅ |
 
-## Recorded baseline (reported, not gated)
+## Recorded performance (reported, not gated)
 
 | Metric | run-1 | run-2 |
 |---|---|---|
-| Output token throughput | 135.59 tok/s | 134.40 tok/s |
-| Request throughput | 1.06 req/s | 1.05 req/s |
-| TTFT p50 / p90 | 6305.46 / 6339.38 ms | 6391.48 / 6425.62 ms |
-| Request latency (e2e) p50 / p90 | 9410.92 / 9434.53 ms | 9497.00 / 9517.81 ms |
-| Inter-token latency p50 | 24.46 ms | 24.45 ms |
+| Output token throughput | 134.92 tok/s | 135.17 tok/s |
+| Request throughput | 1.05 req/s | 1.06 req/s |
+| TTFT p50 / p90 | 6349.85 / 6386.12 ms | 6334.55 / 6369.42 ms |
+| Request latency (e2e) p50 / p90 | 9458.41 / 9482.09 ms | 9438.82 / 9464.49 ms |
+| Inter-token latency p50 | 24.48 ms | 24.45 ms |
 | Output sequence length | 128 tokens | 128 tokens |
 
-The two runs agree within ~1% on throughput and latency — the single-node baseline S2/S3 are
-compared against.
+The two runs agree within ~0.2% on throughput and latency — this is the single-node baseline S2
+(throughput scaling) and S3 (sharding overhead) are compared against.
