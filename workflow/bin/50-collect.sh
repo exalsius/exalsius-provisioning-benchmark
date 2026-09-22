@@ -50,11 +50,14 @@ phase_collect() {
   (( expected_replicas >= 1 )) || expected_replicas=1
   local active_replicas; active_replicas="$(_check_replica_traffic "$expected_replicas")"
 
+  local placement_ok; placement_ok="$(_check_pod_placement)"
+
   # Write the report first (so the artifact exists even on failure), then enforce
   # the hard gates: presence of all required metric series (README §Acceptance), the
-  # WorkspaceDeployment reaching Ready/Available, and every replica having actually
-  # received traffic during the load window — a gap in any fails the run.
-  _write_report "${#missing[@]}" "$ws_ready" "$active_replicas" "$expected_replicas"
+  # WorkspaceDeployment reaching Ready/Available, every replica having actually
+  # received traffic during the load window, and no two model-server pods sharing a
+  # node — a gap in any fails the run.
+  _write_report "${#missing[@]}" "$ws_ready" "$active_replicas" "$expected_replicas" "$placement_ok"
   info "collection complete -> ${RUN_DIR#"$WORKFLOW_ROOT"/}/run-report.md"
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "telemetry acceptance not met: ${#missing[@]} required metric series missing (${missing[*]})"
@@ -67,6 +70,38 @@ phase_collect() {
   elif (( active_replicas < expected_replicas )); then
     die "replica-traffic acceptance not met: only ${active_replicas}/${expected_replicas} replica(s) show a positive vllm:generation_tokens_total delta over the aiperf window (see metrics/vllm_generation_tokens_total.json vs metrics/_pre_load_vllm_generation_tokens_total.json)"
   fi
+  if [[ "$placement_ok" == "false" ]]; then
+    die "pod-placement acceptance not met: two or more model-server pods share a node (see results/pod-placement.txt) — expected each pod on a distinct node (1 GPU/pod, 1 GPU/node)"
+  fi
+}
+
+# Every current scenario runs 1 GPU/pod on 1-GPU/node reference hardware, so no
+# two model-server pods should ever land on the same node — whether they're
+# independent replicas (S2's A2.1, "one per node") or members of the SAME
+# LeaderWorkerSet group (S3's A3.1: a sharded model copy must actually span two
+# distinct GPUs, not co-locate leader+worker on one). This is the real,
+# structural proof of cross-node placement — unlike DCGM_FI_DEV_FB_USED
+# (confounded by GPU_MEMORY_UTILIZATION differing per scenario) or
+# system_fingerprint's `tp2` (a config echo, not a runtime placement check).
+# Selects by the LWS-assigned group-index label (present on every leader AND
+# worker pod — see kubernetes-sigs/lws pod_webhook.go) rather than a
+# scenario-specific name/label, so it works unchanged across S1/S2/S3.
+# Prints "true"/"false"; "true" (vacuously) when no LWS-managed pods are found
+# or in DRY_RUN, so this never blocks a run it can't actually evaluate.
+_check_pod_placement() {
+  [[ "${DRY_RUN:-0}" == "1" ]] && { echo true; return 0; }
+  local out="$RUN_DIR/results/pod-placement.txt" nodes total distinct
+  kc -n "$WORKSPACE_SERVICE_NAMESPACE" get pod \
+    -l 'leaderworkerset.sigs.k8s.io/group-index' \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.nodeName}{"\n"}{end}' \
+    > "$out" 2>/dev/null || true
+  nodes="$(awk -F'\t' 'NF==2 && $2!=""{print $2}' "$out")"
+  # grep -c exits 1 (not just prints 0) when nothing matches — neutralize that
+  # under set -e, since an empty/no-pods result is a valid (vacuously-true) case.
+  total="$(printf '%s\n' "$nodes" | grep -c . || true)"
+  (( total == 0 )) && { echo true; return 0; }
+  distinct="$(printf '%s\n' "$nodes" | sort -u | grep -c . || true)"
+  [[ "$total" -eq "$distinct" ]] && echo true || echo false
 }
 
 # A2.2: verify every replica actually served aiperf traffic, not just that the
@@ -124,6 +159,7 @@ _check_workspace_ready() {
 
 _write_report() {
   local n_missing="$1" ws_ready="${2:-Unknown}" active_replicas="${3:-0}" expected_replicas="${4:-1}"
+  local placement_ok="${5:-true}"
   local report="$RUN_DIR/run-report.md"
   local func_ok="unknown"
   # Functional probe = raw OpenAI response; pass iff a non-empty completion.
@@ -167,6 +203,8 @@ _write_report() {
          "\`docs/specs/common-experiment-setup.md\` §7.1)"
     echo "- Replicas that received load traffic: **${active_replicas}/${expected_replicas}** (must" \
          "equal expected; per-pod \`vllm:generation_tokens_total\` delta over the aiperf window — A2.2)"
+    echo "- Pod placement: **${placement_ok}** (must be true; no two model-server pods share a node" \
+         "— see \`results/pod-placement.txt\`)"
     echo
     echo "## Recorded performance (aiperf; reported, not gated)"
     echo "- Output token throughput: ${tput}"

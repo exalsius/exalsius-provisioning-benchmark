@@ -136,17 +136,18 @@ series from the workflow-applied `PodMonitor`.
 ## 5. Result interpretation
 
 - **Functional acceptance** (gated): all phases `ok`, functional probe `pass`, aiperf 0 errors,
-  0 missing metric series, `WorkspaceDeployment` Ready/Available `True`, cleanup tears down the k0s
-  cluster on the node.
+  0 missing metric series, `WorkspaceDeployment` Ready/Available `True`, pod placement OK (trivial
+  with one pod), cleanup tears down the k0s cluster on the node.
 - **Scenario-1 acceptance** (spec §5): **A1.1** exactly one serving pod
   (`kubectl -n ws-s1-single-node get pod -l llm-d.ai/inference-serving=true`); **A1.2**
-  `DCGM_FI_DEV_FB_USED` non-zero on exactly one GPU (verified: **43634 MiB** on one NVIDIA L40S — the
-  model plus vLLM's KV-cache reservation at `gpu-memory-utilization 0.95`); **A1.3** baseline
-  throughput/TTFT recorded for S2/S3 comparison.
+  `DCGM_FI_DEV_FB_USED` non-zero on exactly one GPU (verified: **39098 MiB** on one NVIDIA L40S — the
+  model plus vLLM's KV-cache reservation at `gpu-memory-utilization 0.85`, the shared `common.env`
+  default across all three scenarios); **A1.3** baseline throughput/TTFT recorded for S2/S3
+  comparison.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): ~135 tok/s output throughput, TTFT
-  p50 ~6.3 s, e2e latency p50 ~9.5 s, the two runs within ~1% of each other. This single-node
-  baseline is what S2 (throughput scaling) and S3 (sharding overhead) will be measured against.
-  Per-run figures: [`../evidence/scenario-1/`](../evidence/scenario-1/).
+  p50 ~6.3 s, e2e latency p50 ~9.5 s, the two runs within ~0.2% of each other. This single-node
+  baseline is what S2 (throughput scaling) and S3 (sharding overhead) are measured against. Per-run
+  figures: [`../evidence/scenario-1/`](../evidence/scenario-1/).
 
 ## 6. Known limitations
 

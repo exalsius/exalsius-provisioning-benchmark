@@ -2,9 +2,9 @@
 
 Common experiment specification and the three scenario specifications for the WP3 Exalsius
 provisioning and experimentation benchmark. Originally **design-only** T1 deliverables; the
-**Common spec, Scenario 1, and Scenario 2 have been updated to as-built** (T3/T4); Scenario 3 keeps
-an as-built banner pending T5. Operator runbooks:
-[Scenario 1](../scenarios/scenario-1.md), [Scenario 2](../scenarios/scenario-2.md).
+**common spec and all three scenarios have been updated to as-built** (T3/T4/T5). Operator
+runbooks: [Scenario 1](../scenarios/scenario-1.md), [Scenario 2](../scenarios/scenario-2.md),
+[Scenario 3](../scenarios/scenario-3.md).
 
 > **Open-source-only, self-contained.** Everything is built on public Exalsius / OSS components —
 > `exalsius-operator` (`WorkspaceClass`, `WorkspaceDeployment` CRDs), `k0rdent`/KCM
@@ -24,7 +24,7 @@ an as-built banner pending T5. Operator runbooks:
 | [Common Experiment Setup](common-experiment-setup.md) | T1 | Shared infrastructure assumptions, deployment conventions, end-to-end flow, expected outputs, required metrics, and acceptance criteria inherited by every scenario. **As-built.** |
 | [Scenario 1 — Single-node](scenario-1-single-node.md) | T1.1 / T3 | Medium LLM, one pod, one NVIDIA node. Reference baseline. **Implemented.** |
 | [Scenario 2 — Replicated](scenario-2-replicated.md) | T1.2 / T4 | Same model, two replicas across two nodes — horizontal scaling / availability. **Implemented; verified (T4).** |
-| [Scenario 3 — Sharded](scenario-3-sharded.md) | T1.3 / T5 | Same model, one model sharded across two nodes — cross-node sharding. Draft. |
+| [Scenario 3 — Sharded](scenario-3-sharded.md) | T1.3 / T5 | Same model, one model sharded across two nodes — cross-node sharding. **Implemented; verified (T5).** |
 
 ## Reading order
 

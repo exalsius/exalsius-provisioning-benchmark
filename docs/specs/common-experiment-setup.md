@@ -288,7 +288,12 @@ serves, and is observable — not on hitting performance targets. Performance fi
    would let a run proceed before the model's `ServiceSet` even exists. The condition is still a
    hard pass/fail requirement, just checked later: the collect phase polls it (bounded, once the
    model has already been proven serving per criterion 2) and **fails the run** if it never reads
-   `True`, recording the observed status in `run-report.md`.
+   `True`, recording the observed status in `run-report.md`. The collect phase also verifies **pod
+   placement**: no two model-server pods (independent replicas or members of the same
+   LeaderWorkerSet group) share a node — every current scenario runs 1 GPU/pod on 1-GPU/node
+   reference hardware, so this both sanity-checks scheduling (S2's "one replica per node") and
+   proves genuine cross-node placement for a sharded model copy (S3), gated by comparing each
+   LWS-labeled pod's `.spec.nodeName`, recorded in `results/pod-placement.txt`.
 2. **Functionality.** The OpenAI-compatible endpoint returns a valid, non-empty completion for
    the functional probe prompt (HTTP 200, coherent text, expected model id).
 3. **Serving stability.** The aiperf load probe completes with a **0% error rate**. Its throughput

@@ -49,6 +49,14 @@ spec:
       name: "${MODEL_ID}"
     modelServer:
       nodesPerReplica: ${NODES_PER_REPLICA}
+      # modelServer.args REPLACES the chart's own args list wholesale (Helm does
+      # not merge arrays), so both of the chart's default flags are re-stated
+      # here — only the utilization value actually varies by scenario/env
+      # (0.95 by default, matching the chart; lower for S3's cross-node TP,
+      # which otherwise OOMs during CUDA-graph capture — see common.env).
+      args:
+        - "--disable-uvicorn-access-log"
+        - "--gpu-memory-utilization=${GPU_MEMORY_UTILIZATION}"
     # Endpoint-picker routing profile. Default payload-agnostic.yaml (least-busy)
     # distributes load evenly across replicas so replicated throughput is
     # reproducible; the chart default (default-plugins.yaml) weights prefix-cache
