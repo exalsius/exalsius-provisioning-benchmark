@@ -87,7 +87,9 @@ per pod/node from the metric snapshots:
 
 Common criteria (§7) **plus**:
 
-- **A2.1** Exactly **two** serving model-server pods running (LWS leaders), one per node.
+- **A2.1** Exactly **two** serving model-server pods running (LWS leaders), one per node — gated
+  in the collect phase (common spec §7.1): no two model-server pods share a `.spec.nodeName`,
+  recorded in `results/pod-placement.txt`.
 - **A2.2** Both replicas receive traffic **during the aiperf window specifically**, verified by a
   per-pod delta of `vllm:generation_tokens_total` (value immediately before aiperf launches vs. the
   post-run snapshot) rather than the raw cumulative counter — which is polluted by whatever the
@@ -113,6 +115,7 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 - Each replica must independently fit the full model — replication does **not** enable larger
   models (that is Scenario 3's sharding).
 - Placement is a *preference* (`ScheduleAnyway` topology spread), not a guarantee; with one GPU per
-  node the per-pod GPU request effectively forces one pod per node anyway.
+  node the per-pod GPU request effectively forces one pod per node anyway. A2.1's placement gate
+  (common spec §7.1) would still catch and fail the run if this ever didn't hold.
 - Scaling is sub-linear (shared gateway/endpoint-picker); the speed-up over S1 depends on load and
   is reported descriptively. The load must sustain enough concurrency to keep both replicas busy.

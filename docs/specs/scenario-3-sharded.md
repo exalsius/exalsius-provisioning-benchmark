@@ -92,20 +92,21 @@ snapshots:
 |--------|---------|
 | Per-node GPU memory (`DCGM_FI_DEV_FB_USED` by `Hostname`) | Confirms both GPUs are in use. Not a shard-split proof on its own — see A3.2. |
 | Per-node GPU utilisation (`DCGM_FI_DEV_GPU_UTIL`) | Both shards active while serving. |
-| TTFT vs. S1 baseline (`vllm:time_to_first_token_seconds_count`) | Recorded for comparison (reported, not gated) — reflects the S3 configuration as a whole (cross-node communication plus the lower `GPU_MEMORY_UTILIZATION`), not an isolated measurement of communication overhead. |
+| TTFT vs. S1 baseline (`vllm:time_to_first_token_seconds_count`) | Recorded for comparison (reported, not gated) — reflects the S3 configuration as a whole (cross-node communication overhead), not an isolated measurement of it. S1 and S3 run at the same `GPU_MEMORY_UTILIZATION=0.85` (see `workflow/config/common.env`), so the comparison isn't confounded by differing KV-cache capacity. |
 
 ## 5. Acceptance criteria (delta)
 
 Common criteria (§7) **plus**:
 
 - **A3.1** Exactly **one** logical model copy realised as **two** pods (a LeaderWorkerSet leader +
-  worker), one per node (`kubectl -n ws-s3-sharded get pod -o wide` shows two, on distinct nodes) —
-  confirmed by manual inspection, like S2's A2.1.
+  worker), one per node — gated in the collect phase (common spec §7.1): no two model-server pods
+  share a `.spec.nodeName`, recorded in `results/pod-placement.txt`. Same mechanism as S2's A2.1.
 - **A3.2** **Both GPUs used:** each node's `DCGM_FI_DEV_FB_USED` is non-zero. This alone does not
-  prove a genuine split rather than a full copy on each node — S3 needs a lower
-  `GPU_MEMORY_UTILIZATION` than S1 (§2 note; the CUDA-graph-capture OOM under TP=2 otherwise),
-  so vLLM's memory-reservation sizing differs between the two scenarios and their raw
-  `DCGM_FI_DEV_FB_USED` figures are not directly comparable as a ratio. The actual sharding proof
+  prove a genuine split rather than a full copy on each node — S1 and S3 run at the same
+  `GPU_MEMORY_UTILIZATION=0.85` (see `workflow/config/common.env`), yet S3's per-node figure
+  (40994 MiB) is slightly *higher* than S1's full-copy figure (39098 MiB), not half of it, since
+  `DCGM_FI_DEV_FB_USED` mostly reflects vLLM's configured reservation cap rather than the actual
+  weight footprint — it would look the same even if the split were fake. The actual sharding proof
   is **A3.1** (leader + worker scheduled on two distinct single-GPU nodes) combined with **A3.3**'s
   `system_fingerprint` check below.
 - **A3.3** Functional-probe completion is coherent and consistent with S1 for the deterministic
