@@ -52,8 +52,8 @@ Operator installed one during `prepare`, confirmed by both runs' `prepare.log`
 | run-1 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:22:36Z | ~23 min | **PASS** |
 | run-2 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:45:43Z | ~23 min | **PASS** |
 
-† Runs were produced ahead of merge, from the branch that adds the pod-placement hard gate and the
-shared `GPU_MEMORY_UTILIZATION=0.85` default. Update to the exact `main` commit SHA once merged.
+† Runs were produced ahead of merge, on the branch that became `main` at tip `f034cdc` (#5, which
+adds the pod-placement hard gate and the shared `GPU_MEMORY_UTILIZATION=0.85` default).
 
 ## Acceptance (both runs)
 

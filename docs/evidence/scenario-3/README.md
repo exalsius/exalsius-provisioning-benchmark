@@ -28,8 +28,8 @@ per node); sanitization runs in place at cleanup ([`workflow/lib/sanitize.sh`](.
 | run-1 | `main` † | 2× Nebius L40S VM (1× L40S 48 GB each) | `Qwen/Qwen3-8B` | 2026-09-22T04:11:41Z | ~32 min | **PASS** |
 | run-2 | `main` † | 2× Nebius L40S VM (1× L40S 48 GB each) | `Qwen/Qwen3-8B` | 2026-09-22T04:43:58Z | ~31 min | **PASS** |
 
-† Runs were produced ahead of merge, from the branch that adds the pod-placement hard gate and the
-shared `GPU_MEMORY_UTILIZATION=0.85` default. Update to the exact `main` commit SHA once merged.
+† Runs were produced ahead of merge, on the branch that became `main` at tip `f034cdc` (#5, which
+adds the pod-placement hard gate and the shared `GPU_MEMORY_UTILIZATION=0.85` default).
 
 ## Acceptance (both runs)
 
