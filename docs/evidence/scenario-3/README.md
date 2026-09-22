@@ -43,15 +43,25 @@ the exact commit SHA once committed.
 | `WorkspaceDeployment` Ready/Available condition `True` | ✅ | ✅ |
 | EPP reported the shard leader discovered before load (`inference_pool_ready_pods`) | ✅ | ✅ |
 | **A3.1** one logical model copy, two pods (leader + worker) on distinct nodes | ✅ | ✅ |
-| **A3.2** per-node `DCGM_FI_DEV_FB_USED` (MiB) | 40994 / 40994 | 40994 / 40994 |
+| **A3.2** both GPUs used — `DCGM_FI_DEV_FB_USED` non-zero on both nodes (MiB) | ✅ 40994 / 40994 | ✅ 40994 / 40994 |
 | **A3.3** functional probe coherent, `system_fingerprint` confirms TP=2 (`vllm-0.26.0-tp2-...`) | ✅ | ✅ |
 | **A3.4** load probe 0 errors despite cross-node path | ✅ | ✅ |
 | Cleanup — `k0sctl reset` tears down the k0s cluster | ✅ | ✅ |
 
+The actual sharding proof is A3.1 (leader + worker on two distinct single-GPU nodes) combined with
+A3.3 (`system_fingerprint` reporting `tp2`, confirming the engine genuinely initialized with
+tensor-parallel size 2). `DCGM_FI_DEV_FB_USED` above only confirms both GPUs are in use — S3 runs
+with `GPU_MEMORY_UTILIZATION=0.85` vs. S1's `0.95`, so vLLM's memory-reservation sizing differs
+between them and the two figures aren't directly comparable as a "half the footprint" ratio.
+
 ## Recorded performance (reported, not gated)
 
-Markedly slower than the single-node S1 baseline — expected, since the 8B model doesn't need
-sharding, so TP=2 here adds pure cross-node communication overhead with no compute benefit.
+Slower than the single-node S1 baseline. Part of this is expected cross-node communication
+overhead (the 8B model doesn't need sharding, so TP=2 here trades pure overhead for no compute
+benefit), but S3 also runs at a lower `GPU_MEMORY_UTILIZATION` (0.85 vs. S1's 0.95, needed to avoid
+a CUDA-graph-capture OOM under TP=2 — see the note above), which affects available KV-cache
+capacity and isn't controlled for here. These figures reflect the S3 configuration as a whole, not
+an isolated measurement of communication overhead.
 
 | Metric | run-1 | run-2 | S1 baseline |
 |---|---|---|---|

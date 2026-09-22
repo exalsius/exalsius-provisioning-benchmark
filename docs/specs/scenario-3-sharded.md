@@ -90,9 +90,9 @@ snapshots:
 
 | Metric | Purpose |
 |--------|---------|
-| Per-node GPU memory (`DCGM_FI_DEV_FB_USED` by `Hostname`) | Confirms a genuine shard split: each node holds **materially less** than S1's single-GPU footprint (~half), not a full copy. |
+| Per-node GPU memory (`DCGM_FI_DEV_FB_USED` by `Hostname`) | Confirms both GPUs are in use. Not a shard-split proof on its own — see A3.2. |
 | Per-node GPU utilisation (`DCGM_FI_DEV_GPU_UTIL`) | Both shards active while serving. |
-| TTFT vs. S1 baseline (`vllm:time_to_first_token_seconds_count`) | Quantifies cross-node communication overhead. |
+| TTFT vs. S1 baseline (`vllm:time_to_first_token_seconds_count`) | Recorded for comparison (reported, not gated) — reflects the S3 configuration as a whole (cross-node communication plus the lower `GPU_MEMORY_UTILIZATION`), not an isolated measurement of communication overhead. |
 
 ## 5. Acceptance criteria (delta)
 
@@ -101,14 +101,16 @@ Common criteria (§7) **plus**:
 - **A3.1** Exactly **one** logical model copy realised as **two** pods (a LeaderWorkerSet leader +
   worker), one per node (`kubectl -n ws-s3-sharded get pod -o wide` shows two, on distinct nodes) —
   confirmed by manual inspection, like S2's A2.1.
-- **A3.2** **Sharding verified:** each node's `DCGM_FI_DEV_FB_USED` is materially **less** than
-  S1's single-GPU footprint (~43634 MiB for the default model — see
-  [Scenario 1 evidence](../evidence/scenario-1/)), showing the weights are split, not copied.
-  Recorded and compared manually against the S1 baseline; deliberately **not** gated against a
-  fixed ratio, since the exact expected fraction depends on model architecture and TP
-  implementation details.
+- **A3.2** **Both GPUs used:** each node's `DCGM_FI_DEV_FB_USED` is non-zero. This alone does not
+  prove a genuine split rather than a full copy on each node — S3 needs a lower
+  `GPU_MEMORY_UTILIZATION` than S1 (§2 note; the CUDA-graph-capture OOM under TP=2 otherwise),
+  so vLLM's memory-reservation sizing differs between the two scenarios and their raw
+  `DCGM_FI_DEV_FB_USED` figures are not directly comparable as a ratio. The actual sharding proof
+  is **A3.1** (leader + worker scheduled on two distinct single-GPU nodes) combined with **A3.3**'s
+  `system_fingerprint` check below.
 - **A3.3** Functional-probe completion is coherent and consistent with S1 for the deterministic
-  prompt (same model + weights).
+  prompt (same model + weights); the response's own `system_fingerprint` reports `tp2`, confirming
+  the engine genuinely initialized with tensor-parallel size 2 rather than two independent copies.
 - **A3.4** The load probe completes with **0 errors** despite the cross-node path; TTFT is
   recorded and compared to the S1 baseline (reported, not gated).
 
