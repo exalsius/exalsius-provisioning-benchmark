@@ -36,16 +36,18 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 | **S3 sharded** | ✅ | ✅ 2/2 PASS² ([evidence](docs/evidence/scenario-3/)) | ✅ [runbook](docs/scenarios/scenario-3.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-3-sharded.md) |
 
 Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
-runs on 2026-09-14 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
+runs on 2026-09-22 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
 [`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
-(2026-09-14), load-balanced across both replicas, with **reproducible ~2.7× throughput scaling** over
+(2026-09-22), load-balanced across both replicas, with **reproducible ~2.8× throughput scaling** over
 S1 under least-busy endpoint-picker routing — both scenarios' runs pass the WorkspaceDeployment-ready,
-EPP-discovery, and (S2) per-replica-traffic delta gates (see the evidence). ² S3 (T5) passed two
-consecutive runs (2026-09-16) with a single sharded (TP=2) model copy across both nodes — slower
-than S1 (~45 tok/s vs. ~135 tok/s, expected: an 8B model doesn't need sharding, so TP=2 here is pure
-cross-node communication overhead) but reproducible (within ~0.4%). Requires
-`GPU_MEMORY_UTILIZATION=0.85` (vs. the chart's 0.95 default) to avoid a CUDA-graph-capture OOM under
-cross-node TP.
+EPP-discovery, (S2) per-replica-traffic delta, and pod-placement hard gates (see the evidence). ² S3
+(T5) passed two consecutive runs (2026-09-22) with a single sharded (TP=2) model copy across both
+nodes, each verified on distinct nodes by the collect phase's pod-placement hard gate — slower than
+S1 (~46 tok/s vs. ~135 tok/s, expected: an 8B model doesn't need sharding, so TP=2 here is pure
+cross-node communication overhead) but reproducible (within ~0.6%). All three scenarios share
+`GPU_MEMORY_UTILIZATION=0.85` (`workflow/config/common.env`, needed to leave CUDA-graph-capture
+headroom under cross-node TP), so the S1 vs. S3 comparison isn't confounded by differing GPU-memory
+settings.
 
 ## Quickstart
 
@@ -83,7 +85,9 @@ Scenario 1 (T3) is the **reference implementation** — implemented, verified (t
 and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
 readiness refinement so load waits for both replicas and a least-busy endpoint-picker routing
 default; it is implemented, documented, and verified by two consecutive PASS runs with reproducible
-~2.7× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow with a lower
-`GPU_MEMORY_UTILIZATION` (cross-node tensor parallelism otherwise OOMs during CUDA-graph capture);
-it is implemented, documented, and verified by two consecutive PASS runs demonstrating a genuine
-cross-node model shard. A published documentation page is a follow-up.
+~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
+`GPU_MEMORY_UTILIZATION=0.85` default (`common.env`; cross-node tensor parallelism otherwise OOMs
+during CUDA-graph capture); it is implemented, documented, and verified by two consecutive PASS
+runs demonstrating a genuine cross-node model shard, with the collect phase's pod-placement hard
+gate confirming the leader and worker land on
+distinct nodes. A published documentation page is a follow-up.

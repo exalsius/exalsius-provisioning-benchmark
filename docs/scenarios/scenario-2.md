@@ -38,8 +38,10 @@ Topology is fixed by [`workflow/config/scenario-s2.env`](../../workflow/config/s
 Both pods are LeaderWorkerSet leaders; a topology-spread preference places one per node, and the
 router's endpoint-picker load-balances across them using **least-busy** routing
 (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow default) so load spreads evenly and
-throughput reproduces. Shared defaults (`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`, …) are in
-`common.env`, same as S1.
+throughput reproduces. Shared defaults (`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`,
+`GPU_MEMORY_UTILIZATION=0.85`, …) are in `common.env`, same as S1 — 0.85 is the value S3's
+cross-node CUDA-graph capture needs, applied to all three scenarios so `DCGM_FI_DEV_FB_USED` stays
+comparable between them.
 
 ## 3. Execution steps
 
@@ -72,9 +74,11 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
 
 - **Functional acceptance** (gated): all phases `ok`, functional probe `pass`, aiperf 0 errors,
   0 missing metric series, `WorkspaceDeployment` Ready/Available `True`, both replicas received load
-  traffic (A2.2), cleanup tears down the k0s cluster on both nodes.
+  traffic (A2.2), pod placement OK (A2.1), cleanup tears down the k0s cluster on both nodes.
 - **Scenario-2 acceptance** (spec §5):
-  - **A2.1** two serving pods, one per node — `kubectl -n ws-s2-replicated get pod -l llm-d.ai/inference-serving=true -o wide` shows two, on different nodes.
+  - **A2.1** two serving pods, one per node (gated in the collect phase: no two model-server pods
+    share a node, recorded in `results/pod-placement.txt`) — spot-check with
+    `kubectl -n ws-s2-replicated get pod -l llm-d.ai/inference-serving=true -o wide`.
   - **A2.2** both replicas receive traffic under load (gated in the collect phase): each pod's
     `vllm:generation_tokens_total` **delta** over the aiperf window — the value right before aiperf
     launched vs. the post-run snapshot — must be positive. A raw post-run cumulative value isn't
@@ -83,11 +87,11 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
   - **A2.3** both GPUs loaded — `DCGM_FI_DEV_FB_USED` non-zero for **both** `Hostname`s in `metrics/DCGM_FI_DEV_FB_USED.json`.
   - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~135 tok/s), expected to exceed it.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
-  replicas and passed every functional gate, with **reproducible ~2.7× scaling** over the S1
-  baseline — run-1 373 tok/s, run-2 368 tok/s (within ~1.4%), TTFT p50 ~350 ms. This relies on
-  least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow
-  default); the chart's prefix-cache-affinity default concentrates load and does not reproduce.
-  Full per-run data: [`../evidence/scenario-2/`](../evidence/scenario-2/).
+  replicas and passed every functional gate, with **reproducible ~2.8× scaling** over the S1
+  baseline — run-1 375.65 tok/s, run-2 377.26 tok/s (within ~0.4%), TTFT p50 ~280–320 ms. This
+  relies on least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the
+  workflow default — see §2). **A2.3** GPU footprint: 39100/39098 MiB (run-1), 39098/39100 MiB
+  (run-2). Full per-run data: [`../evidence/scenario-2/`](../evidence/scenario-2/).
 
 ## 6. Known limitations
 
@@ -103,7 +107,7 @@ Scenario-2-specific:
 | Symptom | Cause | Fix |
 |---|---|---|
 | Only one serving pod (both scheduled, one Pending) | second node not joined, or its GPU not schedulable | check both nodes `Ready` (`bootstrap.log`) and both advertise `nvidia.com/gpu` (GPU operator ready on both) |
-| Both pods on the same node | spread is `ScheduleAnyway` (a preference) | expected only if a node lacks a free GPU; with 1 GPU/node the GPU request forces one per node |
+| Collect phase dies "pod-placement acceptance not met" (A2.1 fails) | both pods landed on the same node — spread is `ScheduleAnyway` (a preference), only expected if a node lacks a free GPU | check `results/pod-placement.txt`; with 1 GPU/node the GPU request should force one per node — investigate why it didn't |
 | Execute phase dies "EPP never reported N ready pool endpoint(s)" | the endpoint-picker hasn't discovered all replicas yet (pod-Ready doesn't imply EPP-discovered) | check `inference_pool_ready_pods` is scraped (router subchart's EPP `ServiceMonitor`); raise `EPP_READY_CHECK_TIMEOUT` (default 180s) only if this is consistently a slow-converge race |
 | Collect phase dies "replica-traffic acceptance not met" (A2.2 fails) | endpoint-picker saw one pod, or `LOAD_CONCURRENCY` too low to fan out | compare `metrics/vllm_generation_tokens_total.json` against `metrics/_pre_load_vllm_generation_tokens_total.json` per `instance`; raise `LOAD_CONCURRENCY` |
 
