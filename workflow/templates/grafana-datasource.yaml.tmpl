@@ -1,0 +1,32 @@
+# Explicit VictoriaMetrics datasource, applied right after grafana.yaml.tmpl.
+# Derived from k0rdent KOF's own reference implementation (kof-storage chart,
+# v1.8.0), matching its "metrics" datasource entry — instanceSelector,
+# resyncPeriod, and type verbatim, with our own VM_QUERY_SERVICE/VM_QUERY_PORT
+# substituted into the url:
+# https://github.com/k0rdent/kof/blob/v1.8.0/charts/kof-storage/templates/grafana/datasources.yaml
+# https://github.com/k0rdent/kof/blob/v1.8.0/charts/kof-storage/values.yaml
+#
+# type: prometheus — VictoriaMetrics' vmselect read path is Prometheus-API-
+# compatible, so Grafana's built-in datasource works against it directly, no
+# VictoriaMetrics-specific plugin needed for querying.
+#
+# isDefault: true (upstream's is false, since it wires three datasources —
+# metrics/logs/traces — and none is singled out): this repo only has the
+# one, so marking it default lets a dashboard panel with no explicit
+# datasource still resolve correctly.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: metrics
+  namespace: ${KOF_NAMESPACE}
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  resyncPeriod: 5m
+  datasource:
+    name: metrics
+    type: prometheus
+    access: proxy
+    url: http://${VM_QUERY_SERVICE}:${VM_QUERY_PORT}/select/0/prometheus
+    isDefault: true

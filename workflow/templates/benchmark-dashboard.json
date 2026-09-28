@@ -1,0 +1,99 @@
+{
+  "title": "Exalsius Benchmark — Run Overview",
+  "uid": "exalsius-benchmark-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "utc",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "tags": ["exalsius", "benchmark", "llm-d"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "EPP ready backend endpoints",
+      "description": "inference_pool_ready_pods — how many backends the router has actually discovered and considers routable. Compare against the scenario's expected replica/shard-leader count.",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "sum(inference_pool_ready_pods)", "legendFormat": "ready endpoints", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "GPU memory footprint by node (DCGM_FI_DEV_FB_USED)",
+      "description": "Per-node VRAM reservation. Confirms which/how many GPUs are loaded — not a proof of an even split (see docs/specs/telemetry.md).",
+      "gridPos": { "x": 6, "y": 0, "w": 18, "h": 6 },
+      "targets": [
+        { "expr": "DCGM_FI_DEV_FB_USED", "legendFormat": "{{Hostname}}", "refId": "A", "format": "table", "instant": true }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "GPU utilisation by node",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "DCGM_FI_DEV_GPU_UTIL", "legendFormat": "{{Hostname}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "In-flight requests by pod (vllm:num_requests_running)",
+      "description": "Per-pod request concurrency. In S2, an even spread across instances is the load-balancing proof (A2.2); a single line is expected for S1/S3.",
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "vllm:num_requests_running", "legendFormat": "{{instance}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Output token throughput by pod",
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum by (instance) (rate(vllm:generation_tokens_total[1m]))", "legendFormat": "{{instance}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "KV-cache usage by pod (vllm:kv_cache_usage_perc)",
+      "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "vllm:kv_cache_usage_perc", "legendFormat": "{{instance}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "EPP per-pod queue depth (distribution)",
+      "description": "inference_pool_per_pod_queue_size — the router's own view of load per backend pod, independent of the vLLM-reported vllm:num_requests_running above. In S2, an even spread across pods is a second, router-level load-balancing signal.",
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "inference_pool_per_pod_queue_size", "legendFormat": "{{model_server_pod}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Average latency (TTFT / end-to-end)",
+      "description": "Computed from the paired _sum/_count series (rate(sum)/rate(count)) — a live, queryable view of the same latencies aiperf reports as a static end-of-run percentile snapshot.",
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(rate(vllm:time_to_first_token_seconds_sum[1m])) / sum(rate(vllm:time_to_first_token_seconds_count[1m]))", "legendFormat": "avg TTFT", "refId": "A" },
+        { "expr": "sum(rate(vllm:e2e_request_latency_seconds_sum[1m])) / sum(rate(vllm:e2e_request_latency_seconds_count[1m]))", "legendFormat": "avg e2e latency", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] }
+    }
+  ]
+}
