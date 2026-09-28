@@ -70,9 +70,9 @@ the **as-built** choices.
 | **WorkspaceClass** | `workspaces.exalsius.ai/v1` cluster-scoped CRD binding a workspace-hub Helm template + default values (here `llm-d-model-1-0-0` from workspace-hub 1.0.0, with prerequisite ServiceTemplate `llm-d-infra-1-0-0`). |
 | **WorkspaceDeployment** | `workspaces.exalsius.ai/v1` CRD instantiating a WorkspaceClass onto the adopted cluster with `resources` + Helm `values`. The operator realises it (and its `llm-d-infra` prereq ServiceTemplate) as a Sveltos `ServiceSet` — this is the operator's own machinery, not something the benchmark authors. |
 | **llm-d** | The reference inference architecture behind the workspace (llm-d 0.9.0): an inference gateway (agentgateway) + router/endpoint-picker in front of one or more vLLM model-server pods (a LeaderWorkerSet). |
-| **Observability stack** | Open-source **k0rdent KOF** — VictoriaMetrics (metrics storage) + OpenTelemetry collectors — installed by direct `helm install`, scraping the **NVIDIA DCGM exporter** (GPU-operator `ServiceMonitor`) and vLLM `/metrics` (a workflow-applied `PodMonitor`). Grafana ships with KOF; dashboards from `exalsius-grafana-dashboards`. (The SaaS observability API is out of scope; the VictoriaMetrics used here is the OSS KOF one.) |
+| **Observability stack** | Open-source **k0rdent KOF** — VictoriaMetrics (metrics storage) + OpenTelemetry collectors — installed by direct `helm install`, scraping the **NVIDIA DCGM exporter** (GPU-operator `ServiceMonitor`), vLLM `/metrics` (a workflow-applied `PodMonitor`), and the llm-d router's endpoint-picker. KOF's own Grafana bundling is opt-in-only, so this repo applies its own explicit `Grafana`/`GrafanaDatasource` CRs (derived from KOF's own reference implementation, `kof-storage` chart) and one purpose-built dashboard — see [`telemetry.md`](telemetry.md) (T6.1/T6.4). (The SaaS observability API is out of scope; the VictoriaMetrics used here is the OSS KOF one.) |
 
-References: [exalsius-operator](https://github.com/exalsius/exalsius-operator) · [workspace-hub](https://github.com/exalsius/exalsius-workspace-hub) · [k0rdent](https://github.com/exalsius/k0rdent) · [k0rdent KOF](https://docs.k0rdent.io/) · [k0rdent adopting clusters](https://docs.k0rdent.io/latest/admin/clusters/admin-adopting-clusters/) · [exalsius-grafana-dashboards](https://github.com/exalsius/exalsius-grafana-dashboards).
+References: [exalsius-operator](https://github.com/exalsius/exalsius-operator) · [workspace-hub](https://github.com/exalsius/exalsius-workspace-hub) · [k0rdent](https://github.com/exalsius/k0rdent) · [k0rdent KOF](https://docs.k0rdent.io/) · [k0rdent adopting clusters](https://docs.k0rdent.io/latest/admin/clusters/admin-adopting-clusters/).
 
 ---
 
@@ -248,22 +248,27 @@ runs/<scenario>/<run-id>/
 
 ## 6. Required metrics (common baseline)
 
-Full definitions, units, labels, and interpretation are the subject of **T6.1**; this section
-fixes the **minimum required series** every scenario must collect. Sources: vLLM (`/metrics`,
-`vllm:` prefix, via a workflow-applied `PodMonitor`), the NVIDIA DCGM exporter (GPU-operator
-`ServiceMonitor`) — both scraped by the **KOF collectors** into **VictoriaMetrics**, and visualised
-in **Grafana**. The collect phase gates on these exact series being present and non-empty:
+Full definitions, units, labels, granularity, and interpretation are documented in
+[`telemetry.md`](telemetry.md) (**T6.1**); this section fixes the **minimum required series** every
+scenario must collect. Sources: vLLM (`/metrics`, `vllm:` prefix, via a workflow-applied
+`PodMonitor`), the NVIDIA DCGM exporter (GPU-operator `ServiceMonitor`), and the llm-d router's
+endpoint-picker (EPP, router-subchart `ServiceMonitor`) — all scraped by the **KOF collectors** into
+**VictoriaMetrics**, and visualised in **Grafana**. `telemetry.md` explains the selection
+philosophy behind this specific set (why not every llm-d component's metrics, for instance).
+The collect phase gates on these exact series being present and non-empty:
 
 | Category | Metric (series) | Unit | Purpose |
 |----------|-----------------|------|---------|
 | **Infra utilisation** | `DCGM_FI_DEV_GPU_UTIL` | % | GPU compute utilisation per GPU |
 | | `DCGM_FI_DEV_FB_USED` | MiB | GPU memory footprint (validates model fit / shard split) |
 | | `DCGM_FI_DEV_POWER_USAGE` | W | Power draw |
-| **Inference execution** | `vllm:num_requests_running` | count | In-flight requests / saturation |
-| | `vllm:time_to_first_token_seconds_count` | count | TTFT sample count (latency histogram) |
-| | `vllm:e2e_request_latency_seconds_count` | count | End-to-end request-latency sample count |
+| **Inference execution** | `vllm:num_requests_running` | count | In-flight requests / saturation — per-pod, one of S2's two load-distribution proofs |
+| | `vllm:time_to_first_token_seconds_count` / `_sum` | count / s | TTFT histogram sample count + cumulative sum — the pair depicts live average TTFT (`rate(sum)/rate(count)`) |
+| | `vllm:e2e_request_latency_seconds_count` / `_sum` | count / s | Same pairing for end-to-end request latency |
 | | `vllm:generation_tokens_total` | tokens | Output token throughput (rate) |
 | | `vllm:kv_cache_usage_perc` | ratio | KV-cache pressure (renamed from `gpu_cache_usage_perc` in vLLM ≥0.9) |
+| **Routing / backend discovery** | `inference_pool_ready_pods` | count | EPP-discovered ready backend endpoints — proves the router can actually route to every replica, not just that the pod is `Ready` |
+| | `inference_pool_per_pod_queue_size` | count | EPP's own per-pod queue depth — S2's second, router-level load-distribution proof, independent of the vLLM-level view above |
 | **Deployment status** | phase timings from `phases.tsv` (provision/deploy→ready durations) | s | Provisioning success & speed |
 | **Scenario-specific** | see each scenario spec | | Replication balance (S2), shard split (S3) |
 
