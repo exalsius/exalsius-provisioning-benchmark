@@ -230,6 +230,20 @@ vm_query_scalar() {
   [[ -n "$resp" ]] && jq -r '.data.result[0].value[1] // empty' <<<"$resp" 2>/dev/null
 }
 
+# vm_query_range_json <promql> <start> <end> [<step>] — print the raw
+# VictoriaMetrics range-query JSON response body (a "matrix": each series has
+# a .values array of [ts, val] pairs, not a single .value) for <promql> over
+# [<start>, <end>]. <start>/<end> accept RFC3339 or unix-epoch seconds — the
+# same instant-query endpoint's server is reused (vm_query_start), just a
+# different path/params. Empty on error or DRY_RUN.
+vm_query_range_json() {
+  local q="$1" start="$2" end="$3" step="${4:-$VM_RANGE_STEP}"
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  curl -sf --data-urlencode "query=$q" --data-urlencode "start=$start" \
+    --data-urlencode "end=$end" --data-urlencode "step=$step" \
+    "${VM_QUERY_BASE}${VM_QUERY_RANGE_PATH}" 2>/dev/null || true
+}
+
 # Split comma-separated NODE_ENDPOINTS into an array of ip:port.
 node_endpoints_array() {
   local IFS=','; read -r -a _EP <<< "${NODE_ENDPOINTS:?NODE_ENDPOINTS not set}"
