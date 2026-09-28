@@ -14,17 +14,20 @@ and is reused unchanged across Scenarios 1–3 (only per-scenario config differs
 
 One self-contained cluster per run (management == target). Observability is
 **k0rdent KOF** — a VictoriaMetrics storage layer (metrics/logs/traces) plus OpenTelemetry
-collectors — run *regionless* (the single cluster stores its own telemetry). k0rdent-istio is not
-used.
+collectors — run *regionless* (the single cluster stores its own telemetry), plus a **Grafana**
+instance and this repo's own run-overview dashboard, auto-provisioned during `prepare` (see
+[Telemetry Specification](../docs/specs/telemetry.md), T6.1/T6.4). k0rdent-istio is not used. The
+cluster — Grafana included — is destroyed at cleanup, so **`--keep`** (below) is what makes the
+dashboard actually viewable; the collect phase prints the exact access commands when it's used.
 
 | Phase | Script | Action |
 |-------|--------|--------|
 | preflight | [`bin/00-preflight.sh`](bin/00-preflight.sh) | Check tooling, inputs, SSH/GPU reachability, node count. |
 | bootstrap | [`bin/10-bootstrap.sh`](bin/10-bootstrap.sh) | `k0sctl` brings up k0s on the provided SSH nodes; export kubeconfig. |
-| prepare | [`bin/20-prepare.sh`](bin/20-prepare.sh) | Install OpenEBS (default StorageClass) + GPU operator; k0rdent/KCM; **KOF** (VictoriaMetrics storage + OTel collectors, regionless); exalsius-operator; **adopt** the cluster into k0rdent; register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). |
+| prepare | [`bin/20-prepare.sh`](bin/20-prepare.sh) | Install OpenEBS (default StorageClass) + GPU operator; k0rdent/KCM; **KOF** (VictoriaMetrics storage + OTel collectors, regionless); **Grafana** (explicit `Grafana` + `GrafanaDatasource` CRs wired to this cluster's own VictoriaMetrics, plus this repo's own run-overview dashboard); exalsius-operator; **adopt** the cluster into k0rdent; register the workspace catalog (HelmRepository → ServiceTemplates → `llm-d-model-1-0-0` WorkspaceClass). |
 | deploy | [`bin/30-deploy.sh`](bin/30-deploy.sh) | Render + apply the scenario `WorkspaceDeployment`; wait for the model's workspace namespace to appear. |
 | execute | [`bin/40-execute.sh`](bin/40-execute.sh) | Wait for every serving pod Ready **and** the endpoint-picker to discover them (`inference_pool_ready_pods`); functional probe (in-cluster curl) + load probe (**aiperf** as an in-cluster Job). |
-| collect | [`bin/50-collect.sh`](bin/50-collect.sh) | Snapshot required metric series from **VictoriaMetrics** (KOF); verify `WorkspaceDeployment` Ready/Available and (multi-replica) per-pod load traffic; write `run-report.md`. |
+| collect | [`bin/50-collect.sh`](bin/50-collect.sh) | Range-query each required series (vLLM, DCGM, EPP) as a time series over the run's serving window from **VictoriaMetrics** (KOF); verify `WorkspaceDeployment` Ready/Available, pod placement, and (multi-replica) per-pod load traffic; write `run-report.md`; print Grafana access instructions if `--keep` was used. |
 | cleanup | [`bin/60-cleanup.sh`](bin/60-cleanup.sh) | Delete the workspace, then `k0sctl reset` — destroys the k0s cluster on the nodes (not a reboot). |
 
 ## Prerequisites
@@ -67,7 +70,9 @@ make docker-run SCENARIO=s2 RUN_ID=exp-01 SSH_KEY_PATH=~/.ssh/bench
 ```
 
 Forward run flags to the in-container `run.sh` via `RUN_FLAGS` — e.g. keep the cluster up, run a
-subset of phases, or preview commands without touching anything:
+subset of phases, or preview commands without touching anything. `--keep` is also what makes the
+Grafana dashboard viewable: the cluster (Grafana included) is destroyed at cleanup otherwise, and
+the collect phase prints the exact `port-forward`/credentials commands only when it's used:
 
 ```bash
 make docker-run SCENARIO=s1 RUN_FLAGS="--to collect --keep"   # everything except cleanup
@@ -147,7 +152,8 @@ runs/<scenario>/<run-id>/
 
 A run passes on: provisioning succeeds (including the `WorkspaceDeployment` reaching Ready/Available),
 the endpoint returns a valid non-empty completion, the aiperf load export is captured with no
-request errors, every replica actually received load traffic (multi-replica scenarios), all
-required metric series are present, and cleanup destroys the k0s cluster on the nodes (not a
-reboot). Performance figures (throughput, TTFT, latency) are **recorded and reported, not gated**.
-Reproducibility = two consecutive clean runs both passing.
+request errors, every replica actually received load traffic (multi-replica scenarios), no two
+model-server pods share a node, all required metric series are present (vLLM, DCGM, and EPP
+pool-readiness — see [Telemetry Specification](../docs/specs/telemetry.md)), and cleanup destroys
+the k0s cluster on the nodes (not a reboot). Performance figures (throughput, TTFT, latency) are
+**recorded and reported, not gated**. Reproducibility = two consecutive clean runs both passing.
