@@ -48,9 +48,9 @@ cross-node communication overhead) but reproducible (within ~0.6%). All three sc
 `GPU_MEMORY_UTILIZATION=0.85` (`workflow/config/common.env`, needed to leave CUDA-graph-capture
 headroom under cross-node TP), so the S1 vs. S3 comparison isn't confounded by differing GPU-memory
 settings. ³ The collect-phase telemetry gate also includes the llm-d router's EPP pool-readiness
-(`inference_pool_ready_pods`) and per-pod queue-distribution (`inference_pool_per_pod_queue_size`,
-a router-level cross-check on S2's load balancing) gauges, plus the vLLM TTFT/e2e-latency `_sum`
-series for live-queryable average latency — see the
+(`inference_pool_ready_pods`) and per-backend queue-depth (`inference_pool_per_pod_queue_size`, a
+routing-pressure diagnostic, not a load-balancing proof) gauges, plus the vLLM TTFT/e2e-latency
+`_sum` series for live-queryable average latency — see the
 [Telemetry Specification](docs/specs/telemetry.md). Verified live on S1; the evidence linked above
 will be refreshed once S2/S3 are verified the same way.
 
@@ -102,7 +102,7 @@ distinct nodes. A published documentation page is a follow-up.
 and T6.4 (Grafana dashboard) are implemented and verified on Scenario 1:
 [`docs/specs/telemetry.md`](docs/specs/telemetry.md) documents every collected metric's
 source/unit/labels/interpretation (vLLM, DCGM, and the llm-d router's EPP pool-readiness and
-per-pod queue-distribution gauges), each collected as a time series over the run's serving window.
+per-backend queue-depth gauges), each collected as a time series over the run's serving window.
 `prepare` provisions an explicit `Grafana` + `GrafanaDatasource` CR pair (derived from k0rdent
 KOF's own reference implementation) wired to this cluster's own VictoriaMetrics, plus this repo's
 own [run-overview dashboard](workflow/templates/benchmark-dashboard.json) — viewable by running

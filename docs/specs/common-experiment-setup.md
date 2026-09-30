@@ -268,7 +268,7 @@ The collect phase gates on these exact series being present and non-empty:
 | | `vllm:generation_tokens_total` | tokens | Output token throughput (rate) |
 | | `vllm:kv_cache_usage_perc` | ratio | KV-cache pressure (renamed from `gpu_cache_usage_perc` in vLLM ≥0.9) |
 | **Routing / backend discovery** | `inference_pool_ready_pods` | count | EPP-discovered ready backend endpoints — proves the router can actually route to every replica, not just that the pod is `Ready` |
-| | `inference_pool_per_pod_queue_size` | count | EPP's own per-pod queue depth — S2's second, router-level load-distribution proof, independent of the vLLM-level view above |
+| | `inference_pool_per_pod_queue_size` | count | EPP's own per-backend queue depth (one series per model-server pod, see `telemetry.md`) — a routing-pressure diagnostic, not a load-balancing proof: reads 0 whenever the router isn't backlogged |
 | **Deployment status** | phase timings from `phases.tsv` (provision/deploy→ready durations) | s | Provisioning success & speed |
 | **Scenario-specific** | see each scenario spec | | Replication balance (S2), shard split (S3) |
 

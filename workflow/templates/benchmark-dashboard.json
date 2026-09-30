@@ -29,7 +29,15 @@
       "targets": [
         { "expr": "DCGM_FI_DEV_FB_USED", "legendFormat": "{{Hostname}}", "refId": "A", "format": "table", "instant": true }
       ],
-      "fieldConfig": { "defaults": { "unit": "decmbytes" }, "overrides": [] }
+      "transformations": [
+        { "id": "filterFieldsByName", "options": { "include": { "pattern": "^(Hostname|Value|DCGM_FI_DRIVER_VERSION|UUID|device|modelName)$" } } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [ { "id": "unit", "value": "MiB" } ] }
+        ]
+      }
     },
     {
       "id": 3,
@@ -45,10 +53,10 @@
       "id": 4,
       "type": "timeseries",
       "title": "In-flight requests by pod (vllm:num_requests_running)",
-      "description": "Per-pod request concurrency. In S2, an even spread across instances is the load-balancing proof (A2.2); a single line is expected for S1/S3.",
+      "description": "Per-pod request concurrency. In S2, an even spread across pods is the load-balancing proof (A2.2); a single line is expected for S1/S3.",
       "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "vllm:num_requests_running", "legendFormat": "{{instance}}", "refId": "A" }
+        { "expr": "sort_by_label(vllm:num_requests_running, \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
     },
@@ -58,9 +66,9 @@
       "title": "Output token throughput by pod",
       "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "sum by (instance) (rate(vllm:generation_tokens_total[1m]))", "legendFormat": "{{instance}}", "refId": "A" }
+        { "expr": "sort_by_label(sum by (pod) (rate(vllm:generation_tokens_total[1m])), \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
       ],
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+      "fieldConfig": { "defaults": { "unit": "tokens/sec" }, "overrides": [] }
     },
     {
       "id": 6,
@@ -68,18 +76,18 @@
       "title": "KV-cache usage by pod (vllm:kv_cache_usage_perc)",
       "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "vllm:kv_cache_usage_perc", "legendFormat": "{{instance}}", "refId": "A" }
+        { "expr": "sort_by_label(vllm:kv_cache_usage_perc, \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
     },
     {
       "id": 7,
       "type": "timeseries",
-      "title": "EPP per-pod queue depth (distribution)",
-      "description": "inference_pool_per_pod_queue_size — the router's own view of load per backend pod, independent of the vLLM-reported vllm:num_requests_running above. In S2, an even spread across pods is a second, router-level load-balancing signal.",
+      "title": "EPP per-pod queue depth (routing pressure)",
+      "description": "inference_pool_per_pod_queue_size — the EPP exports one series per backend, distinguished by the model_server_pod label (pod is the EPP's own pod, constant across all series). model_server_pod carries a \"-rank-N\" suffix (the TP rank within that pod, always 0 for this benchmark's TP=1 replicas) that vLLM's own pod label doesn't have, so it's stripped here and remapped onto pod, matching the vLLM panels' legend exactly. Reads 0 whenever the router isn't backlogged (the common case at this benchmark's concurrency), so treat sustained non-zero values on one pod as a routing-pressure diagnostic, not zero as confirmation of even balance.",
       "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
       "targets": [
-        { "expr": "inference_pool_per_pod_queue_size", "legendFormat": "{{model_server_pod}}", "refId": "A" }
+        { "expr": "sort_by_label(label_replace(inference_pool_per_pod_queue_size, \"pod\", \"$1\", \"model_server_pod\", \"(.*)-rank-[0-9]+\"), \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
     },

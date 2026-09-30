@@ -98,6 +98,27 @@ _wait_grafana_ready() {
   done
 }
 
+# Wait for a grafana-operator "leaf" CR (GrafanaDatasource, GrafanaDashboard, ...)
+# to report its own <Kind>Synchronized condition True. kubectl apply only proves
+# Kubernetes accepted the object, not that grafana-operator successfully synced
+# it into the matched Grafana instance(s) — these CRs don't use a "Ready"
+# condition (unlike the Grafana CR itself); grafana-operator's shared
+# buildSynchronizedCondition() helper sets a per-kind "<Kind>Synchronized"
+# condition instead (e.g. "DatasourceSynchronized", "DashboardSynchronized").
+_wait_grafana_synced() {
+  local kind="$1" name="$2" condition_type="$3" ns="$KOF_NAMESPACE" timeout="${4:-120}"
+  local deadline=$(( $(date +%s) + timeout )) status
+  log "waiting (≤${timeout}s) for $kind '$name' to report $condition_type"
+  while :; do
+    status="$(kc -n "$ns" get "$kind" "$name" \
+      -o jsonpath="{.status.conditions[?(@.type==\"$condition_type\")].status}" 2>/dev/null || true)"
+    [[ "$status" == "True" ]] && { info "$kind '$name' synchronized"; return 0; }
+    (( $(date +%s) < deadline )) || \
+      die "timeout waiting for $kind '$name' to report $condition_type=True (last status: '${status:-none}')"
+    sleep 5
+  done
+}
+
 # Trim the KCM Management's provider list to KCM_PROVIDERS so unused cloud CAPI
 # providers (aws/azure/gcp/docker/...) are uninstalled — we adopt, not provision.
 # Patching (vs. createManagement=false) keeps KCM's own core config intact.
@@ -167,6 +188,7 @@ phase_prepare() {
   log "wiring Grafana to VictoriaMetrics"
   render "$WORKFLOW_ROOT/templates/grafana-datasource.yaml.tmpl" "$RUN_DIR/manifests/grafana-datasource.yaml"
   run kc apply -f "$RUN_DIR/manifests/grafana-datasource.yaml" 2>&1 | tee -a "$logf"
+  _wait_grafana_synced grafanadatasource metrics DatasourceSynchronized
 
   # The one dashboard this repo owns: a single-pane "is this run healthy" view
   # scoped to exactly this benchmark's required metrics and acceptance-criteria
@@ -187,6 +209,7 @@ phase_prepare() {
       json: ($dash[0] | tojson)
     }
   }' | run kc apply -f - 2>&1 | tee -a "$logf"
+  _wait_grafana_synced grafanadashboard exalsius-benchmark-overview DashboardSynchronized
 
   log "installing exalsius-operator"
   run hlm upgrade --install exalsius-operator "$EXALSIUS_OPERATOR_CHART" \

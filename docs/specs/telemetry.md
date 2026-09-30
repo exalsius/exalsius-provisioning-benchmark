@@ -35,9 +35,11 @@ own stories**, not exhaustive coverage of every exporter:
 - **S1 (single-node)** needs a baseline: one GPU loaded, one pod's request/latency/throughput
   behaviour, nothing to compare within the run itself.
 - **S2 (replicated)** is fundamentally a **distribution** story: does load actually spread evenly
-  across the two replicas? This is why S2 gets two independent, cross-checking distribution views
-  below — one from vLLM's own per-pod counters, one from the router/EPP's per-pod view — rather
-  than relying on a single source.
+  across the two replicas? The proof is vLLM's own per-pod request/token counters below, genuinely
+  distinct per backend pod. The router/EPP's per-backend queue-depth gauge (see the
+  Routing/backend-discovery table below) is a secondary, weaker signal — it reads 0 whenever the
+  router isn't backlogged, so it can flag pressure/imbalance on a specific backend when non-zero but
+  can't confirm even balance when it's zero.
 - **S3 (sharded)** is a **placement** story (already hard-gated structurally, see the common spec
   §7.1 pod-placement check) plus a **is-this-actually-split** story, where DCGM alone is
   insufficient (see the Infra utilisation table below) and `system_fingerprint` plus placement
@@ -90,7 +92,7 @@ series in `metrics/*.json`. This is what lets the collected data depict *how* a 
 | Metric | Source | Unit | Labels | Granularity | Meaning | Feeds |
 |--------|--------|------|--------|-------------|---------|-------|
 | `inference_pool_ready_pods` | llm-d router (EPP) | count | `pod`/`instance` (the **EPP's own** pod — this is a pool-wide gauge, not per-backend), `namespace`, `name` (workspace) | chart default (not configured by this repo) | Number of backend pods the EPP has discovered and considers ready to route to | A documented, collect-phase-gated required series; also used directly as the execute-phase readiness gate ([`workflow/bin/40-execute.sh`](../../workflow/bin/40-execute.sh)) proving the router — not just Kubernetes — sees every replica before load starts |
-| `inference_pool_per_pod_queue_size` | llm-d router (EPP) | count | `model_server_pod` (the **backend** pod this sample is about — not `pod`, which is the EPP's own pod), `namespace`, `name` | chart default | The router's own per-pod queue-depth view — distinct data path from vLLM's self-reported per-pod metrics above | **S2 distribution view #2**: a router-level cross-check that load is actually balanced across pods, independent of the vLLM-level view — the two disagreeing would itself be a meaningful finding (e.g. an EPP routing bug that vLLM-side metrics alone wouldn't surface) |
+| `inference_pool_per_pod_queue_size` | llm-d router (EPP) | count | `model_server_pod` (the **backend** pod this series is about; the EPP exports one series per backend — verified live, confirmed via `vmselect`, e.g. two distinct series with `model_server_pod: ...ms-0-rank-0` / `...ms-1-rank-0`), `namespace`, `name` — `pod`/`instance` are the **EPP's own** pod, constant across all series, not a per-backend label | chart default | The router's own per-backend queue-depth view — distinct data path from vLLM's self-reported per-pod metrics above | **Routing-pressure diagnostic**, not a load-balancing proof: reads 0 whenever the router isn't backlogged (the common case at this benchmark's concurrency), so it can surface imbalance/pressure per backend when non-zero but doesn't confirm even balance when zero |
 
 ### Scenario-specific
 
@@ -114,17 +116,19 @@ Provisioned automatically during the `prepare` phase (`workflow/bin/20-prepare.s
    upstream uses, so the derivation is traceable.
 2. **One dashboard** — [`workflow/templates/benchmark-dashboard.json`](../../workflow/templates/benchmark-dashboard.json)
    (plain, importable into any Grafana), scoped to exactly this benchmark's required-metrics and
-   acceptance-criteria story: EPP ready-endpoint count and per-pod queue distribution, per-node
+   acceptance-criteria story: EPP ready-endpoint count and per-backend queue-depth (routing pressure), per-node
    DCGM, per-pod vLLM throughput/concurrency/KV-cache, live-computed average TTFT/e2e latency.
 
-**Viewing it:** the whole cluster (Grafana included) is destroyed at cleanup right after collect —
-run with `--keep` (or `--to collect`) to leave it up; the collect phase then prints the exact
-`port-forward` command and how to retrieve the auto-generated admin credentials (see
-[`workflow/README.md`](../../workflow/README.md)'s Quickstart / RUN_FLAGS section). Without `--keep`,
-the dashboard's real value is that it's importable **after the fact** from the durable evidence:
-every metric's time series is committed alongside `metrics/*.json` (see §2's "Every series..." note)
-and the collect phase's own run-report already summarizes the same gates the dashboard visualizes
-— the dashboard is a live convenience during/right after a run, not the only way to see the result.
+**Viewing it:** the dashboard's panels query VictoriaMetrics **live** — it is not a static export of
+a run's data, so it's only viewable while the cluster (and its VictoriaMetrics) is actually up. The
+whole cluster, Grafana included, is destroyed at cleanup right after collect, so run with `--keep`
+(or `--to collect`) to leave it up; the collect phase then prints the exact `port-forward` command
+and how to retrieve the auto-generated admin credentials (see
+[`workflow/README.md`](../../workflow/README.md)'s Quickstart / RUN_FLAGS section). Without
+`--keep`, the **durable, offline** record of a run is `metrics/*.json` (§2's time series) plus the
+collect phase's own run-report — importing the dashboard JSON into a different Grafana instance only
+gives you the panel layout, pointed at whatever VictoriaMetrics that instance has, not a replay of
+this run's data.
 
 ## 4. Known limitations
 
