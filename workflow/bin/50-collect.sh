@@ -41,6 +41,7 @@ phase_collect() {
   local range_start range_end
   range_start="$(awk -F'\t' '$2=="deploy"{print $1; exit}' "$RUN_DIR/phases.tsv" 2>/dev/null)"
   [[ -z "$range_start" ]] && range_start="$(head -1 "$RUN_DIR/phases.tsv" 2>/dev/null | cut -f1)"
+  _wait_metrics_settled
   range_end="$(date -u +%FT%TZ)"
 
   local present=() missing=() m
@@ -193,6 +194,32 @@ _check_replica_traffic() {
       ]
     | map(select(. > 0)) | length
   ' "$pre" "$post" 2>/dev/null || echo 0
+}
+
+# The scrape → remote-write → ingest pipeline (vmagent -> VictoriaMetrics) has
+# a short visibility lag: a counter's true post-load value can take a few
+# scrape cycles to become queryable, even though the requests that produced it
+# already completed. This workflow's default load finishes in well under a
+# minute, short enough for collect's snapshot to land inside that lag window
+# and read a still-settling, artificially low counter. Poll the aggregate
+# counter until two consecutive reads agree (ingestion caught up) or the
+# bound elapses, so range_end (and therefore every REQUIRED_METRICS snapshot
+# and the A2.2 delta below) is taken from settled data.
+_wait_metrics_settled() {
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  local timeout="${METRICS_SETTLE_TIMEOUT:-45}" prev="" cur=""
+  local deadline=$(( $(date +%s) + timeout ))
+  log "waiting (≤${timeout}s) for vllm:generation_tokens_total to settle"
+  while :; do
+    cur="$(vm_query_scalar 'sum(vllm:generation_tokens_total)')"
+    if [[ -n "$cur" && "$cur" == "$prev" ]]; then
+      info "metrics settled at ${cur}"
+      return 0
+    fi
+    prev="$cur"
+    (( $(date +%s) < deadline )) || { warn "metrics settle wait timed out (last read: ${cur:-<empty>}) — snapshotting anyway"; return 0; }
+    sleep 5
+  done
 }
 
 # Gate on the WorkspaceDeployment's own Ready/Available condition — checked HERE,
