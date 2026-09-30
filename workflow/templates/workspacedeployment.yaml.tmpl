@@ -57,16 +57,48 @@ spec:
       args:
         - "--disable-uvicorn-access-log"
         - "--gpu-memory-utilization=${GPU_MEMORY_UTILIZATION}"
-    # Endpoint-picker routing profile. Default payload-agnostic.yaml (least-busy)
-    # distributes load evenly across replicas so replicated throughput is
-    # reproducible; the chart default (default-plugins.yaml) weights prefix-cache
-    # affinity and concentrates load. Only affects multi-replica runs (S2).
-    # payload-agnostic.yaml uses the Alpha session-affinity-scorer, so the EPP
-    # needs --allow-experimental-plugins to start (harmless for other profiles —
-    # the flag only permits experimental plugins, it does not enable any).
+    # Endpoint-picker routing profile. Default random-picker.yaml: picks
+    # uniformly at random across replicas, ignoring all load-based scoring —
+    # guarantees statistically even distribution over many requests. Least-busy
+    # scheduling (payload-agnostic.yaml) can instead pathologically starve a
+    # replica entirely: a backend fast enough to drain its queue back to ~0
+    # between routing decisions keeps looking "least busy" and keeps winning,
+    # so the other replica never receives a first request (see
+    # docs/specs/scenario-2-replicated.md §7). The chart default
+    # (default-plugins.yaml) weights prefix-cache affinity and concentrates
+    # load even harder. Only affects multi-replica runs (S2).
+    #
+    # There is no genuine round-robin (strict sequential-cycling) picker in
+    # this EPP version — random-picker is the closest built-in equivalent
+    # (uniform distribution over many requests, not per-request cycling) and
+    # is what "round-robin" means throughout this repo's docs/config.
+    #
+    # random-picker.yaml isn't shipped by the chart — pluginsCustomConfig is a
+    # chart-provided extension hook (its content is rendered verbatim as
+    # additional entries in the same ConfigMap the chart's own
+    # default-plugins.yaml/payload-agnostic.yaml live in), then selected the
+    # same way as those two, via pluginsConfigFile.
     igw:
       router:
         epp:
           pluginsConfigFile: ${EPP_PLUGINS_CONFIG}
+          pluginsCustomConfig:
+            random-picker.yaml: |
+              apiVersion: llm-d.ai/v1alpha1
+              kind: EndpointPickerConfig
+              plugins:
+              - type: passthrough-parser
+              - type: random-picker
+              requestHandler:
+                parsers:
+                - pluginRef: passthrough-parser
+              schedulingProfiles:
+              - name: default
+                plugins:
+                - pluginRef: random-picker
+          # payload-agnostic.yaml's session-affinity-scorer and random-picker
+          # itself are both experimental plugins; the flag only permits
+          # experimental plugins, it does not enable any, so it's harmless for
+          # default-plugins.yaml too.
           flags:
             allow-experimental-plugins: true

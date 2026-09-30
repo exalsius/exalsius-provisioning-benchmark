@@ -36,9 +36,12 @@ Topology is fixed by [`workflow/config/scenario-s2.env`](../../workflow/config/s
 | `NODES_PER_REPLICA` | 1 | each pod is a whole model → **2 independent copies**, TP=1 |
 
 Both pods are LeaderWorkerSet leaders; a topology-spread preference places one per node, and the
-router's endpoint-picker load-balances across them using **least-busy** routing
-(`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the workflow default) so load spreads evenly and
-throughput reproduces. Shared defaults (`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`,
+router's endpoint-picker load-balances across them using **uniform-random** routing
+(`EPP_PLUGINS_CONFIG=random-picker.yaml`, the workflow default) so load spreads evenly and
+throughput reproduces regardless of which backend happens to be faster — see
+[spec §7](../specs/scenario-2-replicated.md#7-known-limitations) for why the chart's own
+least-busy profile (`payload-agnostic.yaml`) isn't used here. Shared defaults
+(`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`,
 `GPU_MEMORY_UTILIZATION=0.85`, …) are in `common.env`, same as S1 — 0.85 is the value S3's
 cross-node CUDA-graph capture needs, applied to all three scenarios so `DCGM_FI_DEV_FB_USED` stays
 comparable between them.
@@ -88,10 +91,11 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
   - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~135 tok/s), expected to exceed it.
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
   replicas and passed every functional gate, with **reproducible ~2.8× scaling** over the S1
-  baseline — run-1 375.65 tok/s, run-2 377.26 tok/s (within ~0.4%), TTFT p50 ~280–320 ms. This
-  relies on least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`, the
-  workflow default — see §2). **A2.3** GPU footprint: 39100/39098 MiB (run-1), 39098/39100 MiB
-  (run-2). Full per-run data: [`../evidence/scenario-2/`](../evidence/scenario-2/).
+  baseline — run-1 375.65 tok/s, run-2 377.26 tok/s (within ~0.4%), TTFT p50 ~280–320 ms. These
+  runs used least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`;
+  current default is `random-picker.yaml`, see §2). **A2.3** GPU footprint:
+  39100/39098 MiB (run-1), 39098/39100 MiB (run-2). Full per-run data:
+  [`../evidence/scenario-2/`](../evidence/scenario-2/).
 
 ## 6. Known limitations
 

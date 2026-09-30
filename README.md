@@ -39,8 +39,11 @@ Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by t
 runs on 2026-09-22 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
 [`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
 (2026-09-22), load-balanced across both replicas, with **reproducible ~2.8× throughput scaling** over
-S1 under least-busy endpoint-picker routing — both scenarios' runs pass the WorkspaceDeployment-ready,
-EPP-discovery, (S2) per-replica-traffic delta, and pod-placement hard gates (see the evidence). ² S3
+S1 under least-busy endpoint-picker routing (`payload-agnostic.yaml`; current default is
+uniform-random `random-picker.yaml`, see
+[scenario-2 spec §7](docs/specs/scenario-2-replicated.md#7-known-limitations)) — both scenarios'
+runs pass the WorkspaceDeployment-ready, EPP-discovery, (S2) per-replica-traffic delta, and
+pod-placement hard gates (see the evidence). ² S3
 (T5) passed two consecutive runs (2026-09-22) with a single sharded (TP=2) model copy across both
 nodes, each verified on distinct nodes by the collect phase's pod-placement hard gate — slower than
 S1 (~46 tok/s vs. ~135 tok/s, expected: an 8B model doesn't need sharding, so TP=2 here is pure
@@ -89,9 +92,11 @@ result interpretation, troubleshooting, and reproduction.
 
 Scenario 1 (T3) is the **reference implementation** — implemented, verified (two consecutive runs),
 and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
-readiness refinement so load waits for both replicas and a least-busy endpoint-picker routing
-default; it is implemented, documented, and verified by two consecutive PASS runs with reproducible
-~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
+readiness refinement so load waits for both replicas and a uniform-random endpoint-picker routing
+default (`random-picker.yaml` — see [scenario-2 spec
+§7](docs/specs/scenario-2-replicated.md#7-known-limitations) for why the least-busy alternative
+isn't used); it is implemented, documented, and verified by two consecutive PASS runs with
+reproducible ~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
 `GPU_MEMORY_UTILIZATION=0.85` default (`common.env`; cross-node tensor parallelism otherwise OOMs
 during CUDA-graph capture); it is implemented, documented, and verified by two consecutive PASS
 runs demonstrating a genuine cross-node model shard, with the collect phase's pod-placement hard

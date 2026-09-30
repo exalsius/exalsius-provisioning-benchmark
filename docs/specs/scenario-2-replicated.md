@@ -112,6 +112,18 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 
 ## 7. Known limitations
 
+- Load balancing across replicas depends on the router's endpoint-picker routing profile
+  (`EPP_PLUGINS_CONFIG`, `workflow/config/common.env`). Default `random-picker.yaml`: uniform
+  random selection, ignoring all load-based scoring, guaranteeing a statistically even
+  distribution over many requests. The chart's own least-busy profile (`payload-agnostic.yaml`)
+  can instead pathologically starve a replica entirely: a backend fast enough to drain its queue
+  back to ~0 between routing decisions keeps looking "least busy" and keeps winning, so the other
+  replica never receives a first request, failing A2.2. This is hardware-dependent: it surfaces
+  when one backend is substantially faster than the other (e.g. a mismatched GPU generation such
+  as H100 against this scenario's L40S reference). There is no true round-robin (strict
+  sequential-cycling) picker in
+  this EPP version; `random-picker` is the closest built-in equivalent, and is what "round-robin"
+  means throughout this repo's docs/config.
 - Each replica must independently fit the full model — replication does **not** enable larger
   models (that is Scenario 3's sharding).
 - Placement is a *preference* (`ScheduleAnyway` topology spread), not a guarantee; with one GPU per
