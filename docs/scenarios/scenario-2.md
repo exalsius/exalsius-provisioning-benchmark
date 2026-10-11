@@ -36,9 +36,9 @@ Topology is fixed by [`workflow/config/scenario-s2.env`](../../workflow/config/s
 | `NODES_PER_REPLICA` | 1 | each pod is a whole model → **2 independent copies**, TP=1 |
 
 Both pods are LeaderWorkerSet leaders; a topology-spread preference places one per node, and the
-router's endpoint-picker load-balances across them using **uniform-random** routing
-(`EPP_PLUGINS_CONFIG=random-picker.yaml`, the workflow default) so load spreads evenly and
-throughput reproduces regardless of which backend happens to be faster — see
+router's endpoint-picker distributes across them using **uniform-random** routing
+(`EPP_PLUGINS_CONFIG=random-picker.yaml`, the workflow default) so both replicas reliably receive
+traffic regardless of which backend happens to be faster — see
 [spec §7](../specs/scenario-2-replicated.md#7-known-limitations) for why the chart's own
 least-busy profile (`payload-agnostic.yaml`) isn't used here. Shared defaults
 (`WORKSPACE_CPU=2`, `GPU_VENDOR=NVIDIA`,
@@ -88,19 +88,22 @@ pods (one per node) and both GPUs in use. `run-report.md` reports the aggregate 
     enough on its own, since it would also count whatever the functional probe sent to a single pod
     before aiperf ever started.
   - **A2.3** both GPUs loaded — `DCGM_FI_DEV_FB_USED` non-zero for **both** `Hostname`s in `metrics/DCGM_FI_DEV_FB_USED.json`.
-  - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~135 tok/s), expected to exceed it.
-- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs load-balanced to both
-  replicas and passed every functional gate, with **reproducible ~2.8× scaling** over the S1
-  baseline — run-1 375.65 tok/s, run-2 377.26 tok/s (within ~0.4%), TTFT p50 ~280–320 ms. These
-  runs used least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`;
-  current default is `random-picker.yaml`, see §2). **A2.3** GPU footprint:
-  39100/39098 MiB (run-1), 39098/39100 MiB (run-2). Full per-run data:
+  - **A2.4** aggregate throughput recorded and compared to the S1 baseline (~520.9 tok/s). Reported,
+    not gated — see [spec §3](../specs/scenario-2-replicated.md#3-expected-outcome) for why
+    aggregate throughput is not expected to exceed it at this benchmark's fixed load concurrency.
+- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs distributed load to both
+  replicas and passed every functional gate under uniform-random routing
+  (`EPP_PLUGINS_CONFIG=random-picker.yaml`) — run-1 516.88 tok/s, run-2 483.02 tok/s (~0.93–0.99× the
+  S1 baseline), TTFT p50 120–160 ms. Per-pod traffic split varied run-to-run (63/37 in run-1, roughly
+  even in run-2) while both replicas reliably received traffic (A2.2) in both. **A2.3** GPU
+  footprint: 39100/39098 MiB (run-1), 39100/39100 MiB (run-2). Full per-run data:
   [`../evidence/scenario-2/`](../evidence/scenario-2/).
 
 ## 6. Known limitations
 
 See [spec §7](../specs/scenario-2-replicated.md#7-known-limitations): replication needs the model to
-fit one GPU (no larger models — that is S3); scaling is sub-linear; placement is a preference.
+fit one GPU (no larger models — that is S3); at this benchmark's fixed load concurrency, aggregate
+throughput tracks the S1 baseline rather than scaling with replica count; placement is a preference.
 
 ## 7. Troubleshooting
 

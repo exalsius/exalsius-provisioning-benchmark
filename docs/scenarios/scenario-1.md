@@ -129,9 +129,11 @@ Present + non-empty in VictoriaMetrics or the run fails
 
 `DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, `DCGM_FI_DEV_POWER_USAGE`,
 `vllm:num_requests_running`, `vllm:time_to_first_token_seconds_count`,
-`vllm:e2e_request_latency_seconds_count`, `vllm:generation_tokens_total`,
-`vllm:kv_cache_usage_perc`. DCGM comes from the GPU operator's `ServiceMonitor`; the `vllm:*`
-series from the workflow-applied `PodMonitor`.
+`vllm:time_to_first_token_seconds_sum`, `vllm:e2e_request_latency_seconds_count`,
+`vllm:e2e_request_latency_seconds_sum`, `vllm:generation_tokens_total`,
+`vllm:kv_cache_usage_perc`, `inference_pool_ready_pods`, `inference_pool_per_pod_queue_size`. DCGM
+comes from the GPU operator's `ServiceMonitor`; the `vllm:*` series from the workflow-applied
+`PodMonitor`; the `inference_pool_*` series from the llm-d router's EPP.
 
 ## 5. Result interpretation
 
@@ -144,10 +146,10 @@ series from the workflow-applied `PodMonitor`.
   model plus vLLM's KV-cache reservation at `gpu-memory-utilization 0.85`, the shared `common.env`
   default across all three scenarios); **A1.3** baseline throughput/TTFT recorded for S2/S3
   comparison.
-- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): ~135 tok/s output throughput, TTFT
-  p50 ~6.3 s, e2e latency p50 ~9.5 s, the two runs within ~0.2% of each other. This single-node
-  baseline is what S2 (throughput scaling) and S3 (sharding overhead) are measured against. Per-run
-  figures: [`../evidence/scenario-1/`](../evidence/scenario-1/).
+- **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): ~520.9 tok/s output throughput, TTFT
+  p50 ~0.40 s, e2e latency p50 ~3.84 s, the two runs within ~0.05% of each other. This single-node
+  baseline is what S2 (replica distribution) and S3 (sharding overhead) are measured against.
+  Per-run figures: [`../evidence/scenario-1/`](../evidence/scenario-1/).
 
 ## 6. Known limitations
 

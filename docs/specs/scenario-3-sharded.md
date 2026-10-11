@@ -121,9 +121,9 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 
 | Phase | Expected |
 |-------|----------|
-| Bootstrap + prepare cluster (Phases 1–2, 2 nodes) | ~25 min |
-| Workspace ready (cross-node shard init + NCCL rendezvous) | ~15–25 min |
-| Full run (Phase 0→6) | ~60–70 min |
+| Bootstrap + prepare cluster (Phases 1–2, 2 nodes) | ~8–10 min |
+| Workspace ready (cross-node shard init + NCCL rendezvous) | ~2 min |
+| Full run (Phase 0→6) | ~32 min |
 
 ## 7. Known limitations
 

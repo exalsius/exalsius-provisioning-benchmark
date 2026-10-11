@@ -7,8 +7,9 @@
 
 The **same** medium-sized LLM as S1, served by **two independent model-server pods** — one per
 node — behind the shared llm-d router. Each pod holds a full copy of the model; the router's
-endpoint-picker load-balances requests across them. Demonstrates **horizontal scaling and
-availability** (not model sharding).
+endpoint-picker distributes requests across them. Demonstrates **horizontal replication and
+availability** (not model sharding, and — at this benchmark's fixed load concurrency — not
+throughput scaling; see §3).
 
 ---
 
@@ -68,9 +69,14 @@ per node. The router's `InferencePool` selects both, so the endpoint-picker bala
 
 - k0s comes up on both nodes and is adopted as `ClusterDeployment/bench-s2` (`Ready`); workspace `s2-replicated` ready.
 - **Two** serving pods, one per node, each loading a full model copy.
-- The endpoint-picker distributes the aiperf load across both replicas.
-- Aggregate throughput is **expected to exceed the S1 baseline** (horizontal scaling); the figure is
-  recorded and reported, not gated.
+- The endpoint-picker distributes the aiperf load across both replicas — both verifiably receive
+  traffic (A2.2), though the exact split varies run-to-run since routing is uniform-random, not
+  sequential (see §7).
+- Aggregate and per-replica throughput are recorded and reported, not gated. At this benchmark's
+  fixed load concurrency (one shared pool of in-flight requests split across replicas, not scaled
+  with replica count), aggregate throughput is **not expected to exceed the S1 baseline** — the
+  scenario demonstrates correct horizontal distribution across independent replicas, not increased
+  throughput (see §4's required-metrics note).
 
 ## 4. Required metrics (delta)
 
@@ -79,9 +85,9 @@ per pod/node from the metric snapshots:
 
 | Metric | Purpose |
 |--------|---------|
-| Per-replica request counts (`vllm:num_requests_running` by pod) | Verify the endpoint-picker **balances** load across both replicas. |
+| Per-replica request counts (`vllm:num_requests_running` by pod) | Verify the endpoint-picker **distributes** load across both replicas. |
 | Per-node GPU footprint (`DCGM_FI_DEV_FB_USED` by `Hostname`) | Both GPUs active; each holds a full model copy. |
-| Aggregate vs. per-replica throughput (`vllm:generation_tokens_total` summed vs. by pod) | Quantify scaling relative to S1. |
+| Aggregate vs. per-replica throughput (`vllm:generation_tokens_total` summed vs. by pod) | Quantify the per-replica split; at this benchmark's fixed total load concurrency, aggregate throughput tracks the S1 baseline rather than scaling with replica count (see §3). |
 
 ## 5. Acceptance criteria (delta)
 
@@ -97,8 +103,8 @@ Common criteria (§7) **plus**:
   `num_requests_running` gauge, which can read 0 right after the run finishes regardless of whether
   load was balanced. Both deltas must be positive.
 - **A2.3** Both GPUs report non-zero `DCGM_FI_DEV_FB_USED` (a full model copy on each node).
-- **A2.4** Aggregate and per-replica throughput are recorded and compared to the S1 baseline
-  (expected to exceed it). Reported, not gated.
+- **A2.4** Aggregate and per-replica throughput are recorded and compared to the S1 baseline.
+  Reported, not gated — see §3 for why aggregate throughput is not expected to exceed it.
 
 ## 6. Indicative timings (not acceptance gates)
 
@@ -106,9 +112,9 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 
 | Phase | Expected |
 |-------|----------|
-| Bootstrap + prepare cluster (Phases 1–2, 2 nodes) | ~25 min |
-| Workspace ready (2 replicas, parallel model pull) | ~15 min |
-| Full run (Phase 0→6) | ~55–65 min |
+| Bootstrap + prepare cluster (Phases 1–2, 2 nodes) | ~8–9 min |
+| Workspace ready (2 replicas, parallel model pull) | ~2 min |
+| Full run (Phase 0→6) | ~23–24 min |
 
 ## 7. Known limitations
 
@@ -129,5 +135,8 @@ Informational expectations — **not** pass/fail criteria (see [common spec §7]
 - Placement is a *preference* (`ScheduleAnyway` topology spread), not a guarantee; with one GPU per
   node the per-pod GPU request effectively forces one pod per node anyway. A2.1's placement gate
   (common spec §7.1) would still catch and fail the run if this ever didn't hold.
-- Scaling is sub-linear (shared gateway/endpoint-picker); the speed-up over S1 depends on load and
-  is reported descriptively. The load must sustain enough concurrency to keep both replicas busy.
+- This benchmark's fixed `LOAD_CONCURRENCY` is not scaled with replica count, so the two replicas
+  split one shared pool of in-flight requests rather than each receiving a full independent load —
+  aggregate throughput tracks the S1 baseline rather than multiplying it. A benchmark that scaled
+  concurrency with replica count would be needed to demonstrate throughput scaling; this one
+  demonstrates correct distribution (A2.2), not a speed-up.

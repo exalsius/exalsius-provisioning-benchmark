@@ -104,9 +104,9 @@ Informational expectations for spotting regressions and sizing CI — **not** pa
 
 | Phase | Expected |
 |-------|----------|
-| Bootstrap + prepare cluster (Phases 1–2: k0s + OpenEBS + GPU operator + KCM + KOF + adopt + catalog) | ~20–25 min |
-| Workspace ready incl. model pull (Phase 3) | ~15 min |
-| Full run (Phase 0→6) | ~50–60 min |
+| Bootstrap + prepare cluster (Phases 1–2: k0s + OpenEBS + GPU operator + KCM + KOF + adopt + catalog) | ~9–10 min |
+| Workspace ready incl. model pull (Phase 3) | ~2 min |
+| Full run (Phase 0→6) | ~24–25 min |
 
 ## 7. Known limitations
 

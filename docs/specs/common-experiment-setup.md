@@ -1,9 +1,7 @@
 # Common Experiment Specification (T1)
 
 > **Work package:** WP3 — Exalsius provisioning and experimentation benchmark
-> **Status:** Implemented (as-built). Originally authored as a design-only draft in T1; updated to
-> match the T2 workflow + T3 Scenario 1 reference implementation. See
-> [Deviations from the original design](#deviations-from-the-original-design-as-built).
+> **Status:** Implemented (as-built).
 > **Applies to:** [Scenario 1 — Single-node](scenario-1-single-node.md), [Scenario 2 — Replicated](scenario-2-replicated.md), [Scenario 3 — Sharded](scenario-3-sharded.md)
 
 This document defines the **common experiment setup** shared by all three benchmark
@@ -32,28 +30,6 @@ functionality and telemetry collection.
 > tears the whole thing down (`k0sctl reset`). There is **no separate management cluster** and
 > **no `Colony`-driven child-cluster provisioning** — the cluster is *adopted* into k0rdent, not
 > provisioned by it.
-
----
-
-## Deviations from the original design (as-built)
-
-The T1 draft was written before implementation. During T2 (workflow) and T3 (Scenario 1) the
-stack changed. This section is the authoritative old→new mapping; the rest of the document reflects
-the **as-built** choices.
-
-| Area | Original design (T1 draft) | As-built (T2/T3) | Why |
-|------|----------------------------|------------------|-----|
-| Observability | `kube-prometheus-stack` (Prometheus + Grafana), PromQL | k0rdent **KOF** (VictoriaMetrics storage + OpenTelemetry collectors, regionless) + Grafana; queried via `vmselect` | KOF is the k0rdent-native OSS observability layer (already flagged as the OSS alternative); one umbrella gives storage + OTel collectors. Still OSS, still no SaaS. |
-| Metrics scraping | `ServiceMonitor`/`PodMonitor` → Prometheus | KOF collectors' OTel target-allocator watches Service/PodMonitors → VictoriaMetrics. DCGM via the GPU operator's `ServiceMonitor`; **vLLM via a workflow-applied `PodMonitor`** | The workspace-hub 1.0.0 model chart ships no scrape object for the vLLM pods, so the workflow provides one. |
-| Storage | (unspecified) | **OpenEBS** installed as the default StorageClass | KOF/VictoriaMetrics PVCs need a default StorageClass; bare k0s ships none. |
-| Workspace catalog | WorkspaceClass `llm-inference`, template `llm-inference-workspace-2.0.0`, prereq `llm-d-stack` | workspace-hub **1.0.0**: WorkspaceClass `llm-d-model-1-0-0`, prereq ServiceTemplate `llm-d-infra-1-0-0` | workspace-hub was re-platformed onto **llm-d 0.9.0** (router charts + an owned LeaderWorkerSet model server). |
-| Topology values | `values.decode.replicas`, `values.tensorParallelism`, `values.multinode` | `resources.replicas`, `resources.perReplica.gpuCount`, `values.modelServer.nodesPerReplica`; **TP = nodesPerReplica × gpuCount** | The chart reads the operator's `_exalsius.resources` directly (no `resourceInjection`); the single/multi-node split is one Helm value. |
-| Model field | `values.modelName` + `MODEL_URI` (`hf://…`) | single `values.model.name` (the HF repo id) | vLLM takes the repo id directly; the separate URI is gone. |
-| GPU request | implicit from the chart | WorkspaceDeployment sets `resources.perReplica.gpuVendor: NVIDIA` so the operator injects `gpuResourceName` (`nvidia.com/gpu`) | Without a vendor (or GPU node selector) the 1.0.0 chart renders **no** GPU request and vLLM starts CPU-only. |
-| GPU driver | ≥ 535 | **≥ 580** (CUDA 13) | llm-d 0.9.0 CUDA-13 images require driver ≥ 580. |
-| Load client | generic Python client, `load.json` | **aiperf** (NVIDIA ai-dynamo) run in-cluster as a Kubernetes Job, `aiperf.json` | Standard OpenAI-compatible load tool; running in-cluster exercises the real serving path. |
-| Endpoint access | direct to the llm-d endpoint | shared agentgateway `llm-d-inference-gateway:80` + `X-Gateway-Model-Name: <model>` header | No ambient mesh, so the trusted model header (normally stamped by the mesh route) is set explicitly. |
-| Operator host | `k0sctl`/`kubectl`/`helm`/Python on the host | **Docker only** — every tool is bundled in the workflow container | The T2 workflow runs exclusively inside its image. |
 
 ---
 

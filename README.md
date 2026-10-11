@@ -31,31 +31,29 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 
 | Scenario | Implemented | Verified (2 clean runs) | Docs | Telemetry | Spec |
 |----------|:-----------:|:-----------------------:|:----:|:---------:|:----:|
-| **S1 single-node** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-1/)) | ✅ [runbook](docs/scenarios/scenario-1.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-1-single-node.md) |
-| **S2 replicated** | ✅ | ✅ 2/2 PASS¹ ([evidence](docs/evidence/scenario-2/)) | ✅ [runbook](docs/scenarios/scenario-2.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-2-replicated.md) |
-| **S3 sharded** | ✅ | ✅ 2/2 PASS² ([evidence](docs/evidence/scenario-3/)) | ✅ [runbook](docs/scenarios/scenario-3.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-3-sharded.md) |
+| **S1 single-node** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-1/)) | ✅ [runbook](docs/scenarios/scenario-1.md) | ✅ DCGM + `vllm:*` + EPP¹ | ✅ [as-built](docs/specs/scenario-1-single-node.md) |
+| **S2 replicated** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-2/)) | ✅ [runbook](docs/scenarios/scenario-2.md) | ✅ DCGM + `vllm:*` + EPP¹ | ✅ [as-built](docs/specs/scenario-2-replicated.md) |
+| **S3 sharded** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-3/)) | ✅ [runbook](docs/scenarios/scenario-3.md) | ✅ DCGM + `vllm:*` + EPP¹ | ✅ [as-built](docs/specs/scenario-3-sharded.md) |
 
-Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
-runs on 2026-09-22 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
-[`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
-(2026-09-22), load-balanced across both replicas, with **reproducible ~2.8× throughput scaling** over
-S1 under least-busy endpoint-picker routing (`payload-agnostic.yaml`; current default is
-uniform-random `random-picker.yaml`, see
-[scenario-2 spec §7](docs/specs/scenario-2-replicated.md#7-known-limitations)) — both scenarios'
-runs pass the WorkspaceDeployment-ready, EPP-discovery, (S2) per-replica-traffic delta, and
-pod-placement hard gates (see the evidence). ² S3
-(T5) passed two consecutive runs (2026-09-22) with a single sharded (TP=2) model copy across both
-nodes, each verified on distinct nodes by the collect phase's pod-placement hard gate — slower than
-S1 (~46 tok/s vs. ~135 tok/s, expected: an 8B model doesn't need sharding, so TP=2 here is pure
-cross-node communication overhead) but reproducible (within ~0.6%). All three scenarios share
-`GPU_MEMORY_UTILIZATION=0.85` (`workflow/config/common.env`, needed to leave CUDA-graph-capture
-headroom under cross-node TP), so the S1 vs. S3 comparison isn't confounded by differing GPU-memory
-settings. ³ The collect-phase telemetry gate also includes the llm-d router's EPP pool-readiness
-(`inference_pool_ready_pods`) and per-backend queue-depth (`inference_pool_per_pod_queue_size`, a
-routing-pressure diagnostic, not a load-balancing proof) gauges, plus the vLLM TTFT/e2e-latency
-`_sum` series for live-queryable average latency — see the
-[Telemetry Specification](docs/specs/telemetry.md). Verified live on S1; the evidence linked above
-will be refreshed once S2/S3 are verified the same way.
+Legend: ✅ done · 🟡 pending / draft · ⬜ not started. All three scenarios are verified by two
+consecutive clean-state runs on 2026-10-11 (`main` @ `2d2ccac`), each gated on the
+`WorkspaceDeployment`-ready, EPP-discovery, telemetry (0 missing required series), and pod-placement
+conditions common to every scenario, plus each scenario's own acceptance criteria — see the linked
+evidence for full per-run data. **S1** (single GPU): ~520.9 tok/s, TTFT p50 ~0.4 s. **S2** (two
+independent replicas, `EPP_PLUGINS_CONFIG=random-picker.yaml` — uniform-random routing, see
+[scenario-2 spec §7](docs/specs/scenario-2-replicated.md#7-known-limitations) for why the chart's
+least-busy alternative isn't used): both replicas verifiably receive traffic every run (A2.2); at
+this benchmark's fixed load concurrency, aggregate throughput tracks the S1 baseline (~0.93–0.99×)
+rather than scaling with replica count — the demonstrated value is correct horizontal distribution,
+not increased throughput. **S3** (one model sharded TP=2 across two nodes): ~61.8 tok/s, ~0.12× the
+S1 baseline — cross-node synchronization overhead dominates once per-GPU compute is this fast (the
+8B model doesn't need sharding; S3 demonstrates a genuine cross-node shard, not a throughput win).
+All three scenarios share `GPU_MEMORY_UTILIZATION=0.85` (`workflow/config/common.env`), so the
+comparisons aren't confounded by differing GPU-memory settings. ¹ The collect-phase telemetry gate
+also includes the llm-d router's EPP pool-readiness (`inference_pool_ready_pods`) and per-backend
+queue-depth (`inference_pool_per_pod_queue_size`, a routing-pressure diagnostic, not a
+load-balancing proof) gauges, plus the vLLM TTFT/e2e-latency `_sum` series for live-queryable
+average latency — see the [Telemetry Specification](docs/specs/telemetry.md).
 
 ## Quickstart
 
@@ -90,27 +88,23 @@ result interpretation, troubleshooting, and reproduction.
 
 ## Status
 
-Scenario 1 (T3) is the **reference implementation** — implemented, verified (two consecutive runs),
-and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
-readiness refinement so load waits for both replicas and a uniform-random endpoint-picker routing
-default (`random-picker.yaml` — see [scenario-2 spec
-§7](docs/specs/scenario-2-replicated.md#7-known-limitations) for why the least-busy alternative
-isn't used); it is implemented, documented, and verified by two consecutive PASS runs with
-reproducible ~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
-`GPU_MEMORY_UTILIZATION=0.85` default (`common.env`; cross-node tensor parallelism otherwise OOMs
-during CUDA-graph capture); it is implemented, documented, and verified by two consecutive PASS
-runs demonstrating a genuine cross-node model shard, with the collect phase's pod-placement hard
-gate confirming the leader and worker land on
-distinct nodes. A published documentation page is a follow-up.
+All three scenarios (T3/T4/T5) are implemented, documented, and verified by two consecutive
+clean-state PASS runs each. Scenario 1 is the single-GPU reference implementation. Scenario 2 runs
+two independent replicas behind the shared llm-d router, routed uniform-at-random
+(`EPP_PLUGINS_CONFIG=random-picker.yaml` — see [scenario-2 spec
+§7](docs/specs/scenario-2-replicated.md#7-known-limitations) for why the chart's least-busy
+alternative isn't used), with both replicas verified to receive traffic every run (A2.2). Scenario 3
+shards one model copy across two nodes (TP=2) at the shared `GPU_MEMORY_UTILIZATION=0.85` default
+(`common.env`; needed to leave CUDA-graph-capture headroom under cross-node tensor parallelism),
+with the collect phase's pod-placement hard gate confirming the leader and worker land on distinct
+nodes.
 
-**Observability (T6)** is in progress. T6.1 (telemetry spec), T6.2/T6.3 (verified metric collection),
-and T6.4 (Grafana dashboard) are implemented and verified on Scenario 1:
-[`docs/specs/telemetry.md`](docs/specs/telemetry.md) documents every collected metric's
-source/unit/labels/interpretation (vLLM, DCGM, and the llm-d router's EPP pool-readiness and
-per-backend queue-depth gauges), each collected as a time series over the run's serving window.
-`prepare` provisions an explicit `Grafana` + `GrafanaDatasource` CR pair (derived from k0rdent
-KOF's own reference implementation) wired to this cluster's own VictoriaMetrics, plus this repo's
-own [run-overview dashboard](workflow/templates/benchmark-dashboard.json) — viewable by running
-with `--keep` (the cluster, Grafana included, is destroyed at cleanup otherwise; see
-[`workflow/README.md`](workflow/README.md)). Remaining: verify S2/S3 the same way (two consecutive
-clean runs each), then promote T6.5 (as-built telemetry docs with observed values per scenario).
+**Observability (T6)** is implemented and verified on all three scenarios (two consecutive
+clean-state runs each): [`docs/specs/telemetry.md`](docs/specs/telemetry.md) documents every
+collected metric's source/unit/labels/interpretation (vLLM, DCGM, and the llm-d router's EPP
+pool-readiness and per-backend queue-depth gauges), each collected as a time series over the run's
+serving window. `prepare` provisions an explicit `Grafana` + `GrafanaDatasource` CR pair (derived
+from k0rdent KOF's own reference implementation) wired to this cluster's own VictoriaMetrics, plus
+this repo's own [run-overview dashboard](workflow/templates/benchmark-dashboard.json) — viewable by
+running with `--keep` (the cluster, Grafana included, is destroyed at cleanup otherwise; see
+[`workflow/README.md`](workflow/README.md)).

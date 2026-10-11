@@ -92,9 +92,9 @@ The artifact layout and the collect-phase metric gate are the same as
     `results/pod-placement.txt` (same mechanism as S2's A2.1) — spot-check with
     `kubectl -n ws-s3-sharded get pod -o wide`.
   - **A3.2** both GPUs used — `DCGM_FI_DEV_FB_USED` non-zero on both nodes (**40994 MiB**, both
-    runs). This alone isn't proof of an actual split rather than a full copy on each node — even now
-    that S1 and S3 share the same `GPU_MEMORY_UTILIZATION=0.85` (§2), S3's per-node figure (40994
-    MiB) is slightly *higher* than S1's full-copy figure (39098 MiB), not half of it, confirming
+    runs). This alone isn't proof of an actual split rather than a full copy on each node: S1 and S3
+    share the same `GPU_MEMORY_UTILIZATION=0.85` (§2), yet S3's per-node figure (40994 MiB) is
+    slightly *higher* than S1's full-copy figure (39098 MiB), not half of it, confirming
     `DCGM_FI_DEV_FB_USED` mostly reflects vLLM's configured reservation cap rather than the actual
     weight footprint — it wouldn't drop even if the split were fake. The real sharding proof is
     A3.1 (leader + worker on distinct single-GPU nodes) plus A3.3 below.
@@ -104,12 +104,13 @@ The artifact layout and the collect-phase metric gate are the same as
   - **A3.4** the load probe completes with **0 errors** despite the cross-node path; TTFT is
     recorded and compared to the S1 baseline (reported, not gated).
 - **Baseline** (`Qwen/Qwen3-8B`, concurrency 16, 200 requests): both runs passed every functional
-  gate — run-1 45.99 tok/s, run-2 45.70 tok/s (within ~0.6%), TTFT p50 ~13.8–14.1 s. Markedly
-  **slower** than S1's baseline (~135 tok/s, TTFT p50 ~6.3 s) — expected cross-node communication
-  overhead for a model that doesn't need sharding. S1 and S3 run at the same
-  `GPU_MEMORY_UTILIZATION=0.85` (§2), so this gap isn't confounded by differing KV-cache capacity
-  between them; these figures reflect the S3
-  configuration as a whole, not an isolated overhead measurement (§6). Full per-run data:
+  gate — run-1 61.18 tok/s, run-2 62.50 tok/s (within ~2.2%), TTFT p50 ~11.4–11.5 s. Markedly
+  **slower** than S1's baseline (~520.9 tok/s, TTFT p50 ~0.40 s, ~0.12× S1's throughput) — expected
+  cross-node communication overhead for a model that doesn't need sharding: each decode step pays a
+  roughly fixed cross-node synchronization cost that dominates once per-GPU compute is this fast.
+  S1 and S3 run at the same `GPU_MEMORY_UTILIZATION=0.85` (§2), so this gap isn't confounded by
+  differing KV-cache capacity between them; these figures reflect the S3 configuration as a whole,
+  not an isolated overhead measurement (§6). Full per-run data:
   [`../evidence/scenario-3/`](../evidence/scenario-3/).
 
 ## 6. Known limitations

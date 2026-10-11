@@ -1,8 +1,8 @@
 # Telemetry Specification (T6.1)
 
 > **Inherits:** [Common Experiment Specification](common-experiment-setup.md).
-> **Status:** Draft — pending full T6.2 verification (two consecutive clean runs per scenario,
-> across all three scenarios).
+> **Status:** Implemented (as-built). Verified — two consecutive clean runs per scenario, across
+> all three scenarios (T6.2).
 > Operator-facing metric summaries live in each scenario's runbook; this document is the single
 > place that defines *every* collected metric's source, meaning, unit, labels, granularity, and
 > intended interpretation, per T6.1's deliverable text.
@@ -84,7 +84,7 @@ series in `metrics/*.json`. This is what lets the collected data depict *how* a 
 | `vllm:num_requests_running` | vLLM | count | `instance` (pod IP:port), `model_name` | 15s | In-flight request count on one server | S1 baseline saturation; **S2 distribution view #1** — an even spread across pods' `instance` values is one of the two load-balancing proofs (see §1.1) |
 | `vllm:time_to_first_token_seconds_count` / `_sum` | vLLM | count / seconds | `instance`, `model_name` | 15s | Histogram sample count and cumulative sum backing TTFT | `rate(_sum)/rate(_count)` gives **average TTFT over time**, queryable live — cross-checked against aiperf's own end-of-run TTFT percentile in `run-report.md` |
 | `vllm:e2e_request_latency_seconds_count` / `_sum` | vLLM | count / seconds | `instance`, `model_name` | 15s | Same pairing, for end-to-end request latency | Same role as TTFT above, for e2e latency |
-| `vllm:generation_tokens_total` | vLLM | tokens (counter) | `instance`, `model_name` | 15s | Cumulative output tokens generated | A2.2 (per-pod delta over the aiperf window proves real traffic, not just a probe hit); `rate()` by pod depicts S2's throughput-scaling story directly |
+| `vllm:generation_tokens_total` | vLLM | tokens (counter) | `instance`, `model_name` | 15s | Cumulative output tokens generated | A2.2 (per-pod delta over the aiperf window proves real traffic, not just a probe hit); `rate()` by pod depicts S2's per-replica distribution directly |
 | `vllm:kv_cache_usage_perc` | vLLM | ratio (0–1) | `instance`, `model_name` | 15s | KV-cache occupancy | Capacity-pressure signal, relevant to S3's lower `GPU_MEMORY_UTILIZATION` headroom story; renamed from `vllm:gpu_cache_usage_perc` in vLLM ≥0.9 |
 
 ### Routing / backend discovery
@@ -92,7 +92,7 @@ series in `metrics/*.json`. This is what lets the collected data depict *how* a 
 | Metric | Source | Unit | Labels | Granularity | Meaning | Feeds |
 |--------|--------|------|--------|-------------|---------|-------|
 | `inference_pool_ready_pods` | llm-d router (EPP) | count | `pod`/`instance` (the **EPP's own** pod — this is a pool-wide gauge, not per-backend), `namespace`, `name` (workspace) | chart default (not configured by this repo) | Number of backend pods the EPP has discovered and considers ready to route to | A documented, collect-phase-gated required series; also used directly as the execute-phase readiness gate ([`workflow/bin/40-execute.sh`](../../workflow/bin/40-execute.sh)) proving the router — not just Kubernetes — sees every replica before load starts |
-| `inference_pool_per_pod_queue_size` | llm-d router (EPP) | count | `model_server_pod` (the **backend** pod this series is about; the EPP exports one series per backend — verified live, confirmed via `vmselect`, e.g. two distinct series with `model_server_pod: ...ms-0-rank-0` / `...ms-1-rank-0`), `namespace`, `name` — `pod`/`instance` are the **EPP's own** pod, constant across all series, not a per-backend label | chart default | The router's own per-backend queue-depth view — distinct data path from vLLM's self-reported per-pod metrics above | **Routing-pressure diagnostic**, not a load-balancing proof: reads 0 whenever the router isn't backlogged (the common case at this benchmark's concurrency), so it can surface imbalance/pressure per backend when non-zero but doesn't confirm even balance when zero |
+| `inference_pool_per_pod_queue_size` | llm-d router (EPP) | count | `model_server_pod` (the **backend** pod this series is about — the EPP exports one series per backend, e.g. two distinct series with `model_server_pod: ...ms-0-rank-0` / `...ms-1-rank-0`), `namespace`, `name` — `pod`/`instance` are the **EPP's own** pod, constant across all series, not a per-backend label | chart default | The router's own per-backend queue-depth view — distinct data path from vLLM's self-reported per-pod metrics above | **Routing-pressure diagnostic**, not a load-balancing proof: reads 0 whenever the router isn't backlogged (the common case at this benchmark's concurrency), so it can surface imbalance/pressure per backend when non-zero but doesn't confirm even balance when zero |
 
 ### Scenario-specific
 
