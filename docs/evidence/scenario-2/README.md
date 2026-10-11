@@ -14,7 +14,9 @@ live in a Git LFS tarball alongside this file:
 > after run-1's cleanup tore down the k0s cluster on both nodes — consecutive from a fresh cluster,
 > not a rebooted/bare node (see [Scenario 1 §6](../../scenarios/scenario-1.md#6-known-limitations)).
 > Aggregate throughput **reproduced** (~2.8× the S1 baseline, within ~0.4% run-to-run) under
-> least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`).
+> least-busy endpoint-picker routing (`EPP_PLUGINS_CONFIG=payload-agnostic.yaml`; current default
+> is `random-picker.yaml`, see
+> [scenario-2 spec §7](../../specs/scenario-2-replicated.md#7-known-limitations)).
 > `GPU_MEMORY_UTILIZATION=0.85` (set in `workflow/config/common.env`, shared across all three
 > scenarios).
 
@@ -49,8 +51,9 @@ adds the pod-placement hard gate and the shared `GPU_MEMORY_UTILIZATION=0.85` de
 
 ## Recorded performance (reported, not gated)
 
-Least-busy routing (`payload-agnostic.yaml`) distributes load evenly across the two replicas, so
-throughput **reproduces** and scales ~2.8× over the single-replica S1 baseline (see
+Least-busy routing (`payload-agnostic.yaml`) distributed load evenly across the two replicas on
+this reference L40S hardware, so throughput **reproduced** and scaled ~2.8× over the single-replica
+S1 baseline (see
 [`../scenario-1/README.md`](../scenario-1/README.md) for the S1 figures).
 
 | Metric | run-1 | run-2 | S1 baseline |

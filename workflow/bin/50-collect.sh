@@ -10,9 +10,15 @@ REQUIRED_METRICS=(
   'DCGM_FI_DEV_POWER_USAGE'
   'vllm:num_requests_running'
   'vllm:time_to_first_token_seconds_count'
-  'vllm:e2e_request_latency_seconds_count'
+  'vllm:time_to_first_token_seconds_sum'      # paired with _count: rate(sum)/rate(count) gives
+  'vllm:e2e_request_latency_seconds_count'    # average latency over time
+  'vllm:e2e_request_latency_seconds_sum'
   'vllm:generation_tokens_total'
   'vllm:kv_cache_usage_perc'   # renamed from vllm:gpu_cache_usage_perc in vLLM ~0.9+
+  'inference_pool_ready_pods'          # EPP backend-discovery gauge — see docs/specs/telemetry.md
+  'inference_pool_per_pod_queue_size'  # EPP's per-pod queue depth — a router-level cross-check on
+                                        # S2's replica load-balancing, independent of vLLM's own
+                                        # per-pod vllm:num_requests_running
 )
 
 phase_collect() {
@@ -21,11 +27,29 @@ phase_collect() {
   # shellcheck disable=SC2064
   trap "vm_query_stop" RETURN
 
+  # Each required series is snapshotted as a time series over the run's
+  # serving window (functional probe + aiperf load), not a single instant
+  # value — this is what lets the collected data depict how the scenario
+  # behaved (ramp-up, steady state), not just that it had a pulse at
+  # whatever moment collect happened to run.
+  #
+  # Window start = the "deploy" row's timestamp in phases.tsv. phases.tsv
+  # rows are written after each phase completes (see run.sh's loop), so
+  # "deploy"'s row is exactly when execute began — the "execute" row itself
+  # would be execute's END time, i.e. collect's own start, and unusable as a
+  # window boundary.
+  local range_start range_end
+  range_start="$(awk -F'\t' '$2=="deploy"{print $1; exit}' "$RUN_DIR/phases.tsv" 2>/dev/null)"
+  [[ -z "$range_start" ]] && range_start="$(head -1 "$RUN_DIR/phases.tsv" 2>/dev/null | cut -f1)"
+  _wait_metrics_settled
+  range_end="$(date -u +%FT%TZ)"
+
   local present=() missing=() m
   for m in "${REQUIRED_METRICS[@]}"; do
     local safe; safe="$(printf '%s' "$m" | tr ':/' '__')"
     if [[ "${DRY_RUN:-0}" == "1" ]]; then present+=("$m"); continue; fi
-    vm_query_json "$m" > "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || true
+    vm_query_range_json "$m" "$range_start" "$range_end" \
+      > "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || true
     if [[ "$(jq -r '.data.result | length' "$RUN_DIR/metrics/${safe}.json" 2>/dev/null || echo 0)" -gt 0 ]]; then
       present+=("$m")
     else
@@ -73,6 +97,42 @@ phase_collect() {
   if [[ "$placement_ok" == "false" ]]; then
     die "pod-placement acceptance not met: two or more model-server pods share a node (see results/pod-placement.txt) — expected each pod on a distinct node (1 GPU/pod, 1 GPU/node)"
   fi
+
+  _print_grafana_access
+}
+
+# The cluster (Grafana included) is destroyed at cleanup right after this
+# phase — the dashboard is only viewable if that's skipped (`--keep`, or
+# `--to collect`), so only print access instructions when that's actually the
+# case (KEEP is run.sh's own top-level variable; phase_collect runs in the
+# same shell, not a subshell, so it's already in scope here — no export
+# needed). See workflow/README.md's Quickstart for the --keep flag itself.
+#
+# $KUBECONFIG_OUT is a container-internal path (e.g. /workflow/runs/...) — it
+# only resolves inside this container's own filesystem, and this container
+# exits (and is removed, `docker run --rm`) once this script returns, so by
+# the time anyone reads this message the container is already gone. The repo
+# only runs containerized (no bare-host invocation, see workflow/Makefile),
+# so what actually matters is the HOST path: RUNS_DIR is bind-mounted from
+# `workflow/runs` on the host to `/workflow/runs` in the container, so the
+# same file is readable with the host's own kubectl at that relative path
+# (from the `workflow/` directory, matching the Quickstart's `cd workflow`).
+# Print both, clearly labeled, rather than the container-only path alone.
+_print_grafana_access() {
+  [[ "${KEEP:-0}" == "1" && "${DRY_RUN:-0}" != "1" ]] || return 0
+  local host_kubeconfig="runs/${SCENARIO}/${RUN_ID}/kubeconfig"
+  cat <<EOF
+
+=== Grafana dashboard (cluster kept alive: --keep) ===
+  Run these from your HOST shell, after "cd workflow" (this container is gone by the time you read this):
+    export KUBECONFIG="$host_kubeconfig"
+    kubectl -n "$KOF_NAMESPACE" port-forward svc/grafana-vm-service 3000:3000
+    open http://localhost:3000  (folder: "Exalsius Benchmark")
+    admin user:     kubectl -n "$KOF_NAMESPACE" get secret grafana-vm-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_USER}' | base64 -d; echo
+    admin password: kubectl -n "$KOF_NAMESPACE" get secret grafana-vm-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d; echo
+  (Container-internal path, only usable via "docker exec" into a still-running container: $KUBECONFIG_OUT)
+  When done, tear the cluster down: RUN_ID=$RUN_ID make docker-cleanup SCENARIO=$SCENARIO
+EOF
 }
 
 # Every current scenario runs 1 GPU/pod on 1-GPU/node reference hardware, so no
@@ -121,15 +181,45 @@ _check_replica_traffic() {
   local pre="$RUN_DIR/metrics/_pre_load_vllm_generation_tokens_total.json"
   local post="$RUN_DIR/metrics/vllm_generation_tokens_total.json"
   [[ -s "$pre" && -s "$post" ]] || { echo missing; return 0; }
+  # $pre is an instant-query snapshot (a single before-load value); $post is
+  # the range-query snapshot from REQUIRED_METRICS (a "matrix" — each series
+  # has a .values array of [ts, val] pairs, not a single .value), so its
+  # most-recent sample is .values[-1][1].
   jq -s '
     (.[0].data.result // []) as $preArr
     | (.[1].data.result // []) as $post
     | ($preArr | map({(.metric.instance): .value[1]}) | add // {}) as $preMap
     | [ $post[] as $p
-        | (($p.value[1] | tonumber) - (($preMap[$p.metric.instance] // "0") | tonumber))
+        | (($p.values[-1][1] | tonumber) - (($preMap[$p.metric.instance] // "0") | tonumber))
       ]
     | map(select(. > 0)) | length
   ' "$pre" "$post" 2>/dev/null || echo 0
+}
+
+# The scrape → remote-write → ingest pipeline (vmagent -> VictoriaMetrics) has
+# a short visibility lag: a counter's true post-load value can take a few
+# scrape cycles to become queryable, even though the requests that produced it
+# already completed. This workflow's default load finishes in well under a
+# minute, short enough for collect's snapshot to land inside that lag window
+# and read a still-settling, artificially low counter. Poll the aggregate
+# counter until two consecutive reads agree (ingestion caught up) or the
+# bound elapses, so range_end (and therefore every REQUIRED_METRICS snapshot
+# and the A2.2 delta below) is taken from settled data.
+_wait_metrics_settled() {
+  [[ "${DRY_RUN:-0}" == "1" ]] && return 0
+  local timeout="${METRICS_SETTLE_TIMEOUT:-45}" prev="" cur=""
+  local deadline=$(( $(date +%s) + timeout ))
+  log "waiting (≤${timeout}s) for vllm:generation_tokens_total to settle"
+  while :; do
+    cur="$(vm_query_scalar 'sum(vllm:generation_tokens_total)')"
+    if [[ -n "$cur" && "$cur" == "$prev" ]]; then
+      info "metrics settled at ${cur}"
+      return 0
+    fi
+    prev="$cur"
+    (( $(date +%s) < deadline )) || { warn "metrics settle wait timed out (last read: ${cur:-<empty>}) — snapshotting anyway"; return 0; }
+    sleep 5
+  done
 }
 
 # Gate on the WorkspaceDeployment's own Ready/Available condition — checked HERE,

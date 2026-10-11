@@ -1,0 +1,107 @@
+{
+  "title": "Exalsius Benchmark — Run Overview",
+  "uid": "exalsius-benchmark-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "utc",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "tags": ["exalsius", "benchmark", "llm-d"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "EPP ready backend endpoints",
+      "description": "inference_pool_ready_pods — how many backends the router has actually discovered and considers routable. Compare against the scenario's expected replica/shard-leader count.",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 6 },
+      "targets": [
+        { "expr": "sum(inference_pool_ready_pods)", "legendFormat": "ready endpoints", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "GPU memory footprint by node (DCGM_FI_DEV_FB_USED)",
+      "description": "Per-node VRAM reservation. Confirms which/how many GPUs are loaded — not a proof of an even split (see docs/specs/telemetry.md).",
+      "gridPos": { "x": 6, "y": 0, "w": 18, "h": 6 },
+      "targets": [
+        { "expr": "DCGM_FI_DEV_FB_USED", "legendFormat": "{{Hostname}}", "refId": "A", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "filterFieldsByName", "options": { "include": { "pattern": "^(Hostname|Value|DCGM_FI_DRIVER_VERSION|UUID|device|modelName)$" } } }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [ { "id": "unit", "value": "MiB" } ] }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "GPU utilisation by node",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "DCGM_FI_DEV_GPU_UTIL", "legendFormat": "{{Hostname}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "In-flight requests by pod (vllm:num_requests_running)",
+      "description": "Per-pod request concurrency. In S2, an even spread across pods is the load-balancing proof (A2.2); a single line is expected for S1/S3.",
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sort_by_label(vllm:num_requests_running, \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Output token throughput by pod",
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sort_by_label(sum by (pod) (rate(vllm:generation_tokens_total[1m])), \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "tokens/sec" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "KV-cache usage by pod (vllm:kv_cache_usage_perc)",
+      "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sort_by_label(vllm:kv_cache_usage_perc, \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "EPP per-pod queue depth (routing pressure)",
+      "description": "inference_pool_per_pod_queue_size — the EPP exports one series per backend, distinguished by the model_server_pod label (pod is the EPP's own pod, constant across all series). model_server_pod carries a \"-rank-N\" suffix (the TP rank within that pod, always 0 for this benchmark's TP=1 replicas) that vLLM's own pod label doesn't have, so it's stripped here and remapped onto pod, matching the vLLM panels' legend exactly. Reads 0 whenever the router isn't backlogged (the common case at this benchmark's concurrency), so treat sustained non-zero values on one pod as a routing-pressure diagnostic, not zero as confirmation of even balance.",
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sort_by_label(label_replace(inference_pool_per_pod_queue_size, \"pod\", \"$1\", \"model_server_pod\", \"(.*)-rank-[0-9]+\"), \"pod\")", "legendFormat": "{{pod}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Average latency (TTFT / end-to-end)",
+      "description": "Computed from the paired _sum/_count series (rate(sum)/rate(count)) — a live, queryable view of the same latencies aiperf reports as a static end-of-run percentile snapshot.",
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(rate(vllm:time_to_first_token_seconds_sum[1m])) / sum(rate(vllm:time_to_first_token_seconds_count[1m]))", "legendFormat": "avg TTFT", "refId": "A" },
+        { "expr": "sum(rate(vllm:e2e_request_latency_seconds_sum[1m])) / sum(rate(vllm:e2e_request_latency_seconds_count[1m]))", "legendFormat": "avg e2e latency", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] }
+    }
+  ]
+}

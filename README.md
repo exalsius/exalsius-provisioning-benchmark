@@ -31,23 +31,31 @@ differs. Topology: `tensor-parallel size = NODES_PER_REPLICA × GPU_COUNT_PER_RE
 
 | Scenario | Implemented | Verified (2 clean runs) | Docs | Telemetry | Spec |
 |----------|:-----------:|:-----------------------:|:----:|:---------:|:----:|
-| **S1 single-node** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-1/)) | ✅ [runbook](docs/scenarios/scenario-1.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-1-single-node.md) |
-| **S2 replicated** | ✅ | ✅ 2/2 PASS¹ ([evidence](docs/evidence/scenario-2/)) | ✅ [runbook](docs/scenarios/scenario-2.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-2-replicated.md) |
-| **S3 sharded** | ✅ | ✅ 2/2 PASS² ([evidence](docs/evidence/scenario-3/)) | ✅ [runbook](docs/scenarios/scenario-3.md) | ✅ DCGM + `vllm:*` | ✅ [as-built](docs/specs/scenario-3-sharded.md) |
+| **S1 single-node** | ✅ | ✅ 2/2 PASS ([evidence](docs/evidence/scenario-1/)) | ✅ [runbook](docs/scenarios/scenario-1.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-1-single-node.md) |
+| **S2 replicated** | ✅ | ✅ 2/2 PASS¹ ([evidence](docs/evidence/scenario-2/)) | ✅ [runbook](docs/scenarios/scenario-2.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-2-replicated.md) |
+| **S3 sharded** | ✅ | ✅ 2/2 PASS² ([evidence](docs/evidence/scenario-3/)) | ✅ [runbook](docs/scenarios/scenario-3.md) | 🟡 DCGM + `vllm:*` + EPP³ | ✅ [as-built](docs/specs/scenario-3-sharded.md) |
 
 Legend: ✅ done · 🟡 pending / draft · ⬜ not started. S1 is verified by two consecutive clean-state
 runs on 2026-09-22 (baseline ~135 tok/s, TTFT p50 ~6.3 s), under
 [`docs/evidence/scenario-1/`](docs/evidence/scenario-1/). ¹ S2 (T4) passed two consecutive runs
 (2026-09-22), load-balanced across both replicas, with **reproducible ~2.8× throughput scaling** over
-S1 under least-busy endpoint-picker routing — both scenarios' runs pass the WorkspaceDeployment-ready,
-EPP-discovery, (S2) per-replica-traffic delta, and pod-placement hard gates (see the evidence). ² S3
+S1 under least-busy endpoint-picker routing (`payload-agnostic.yaml`; current default is
+uniform-random `random-picker.yaml`, see
+[scenario-2 spec §7](docs/specs/scenario-2-replicated.md#7-known-limitations)) — both scenarios'
+runs pass the WorkspaceDeployment-ready, EPP-discovery, (S2) per-replica-traffic delta, and
+pod-placement hard gates (see the evidence). ² S3
 (T5) passed two consecutive runs (2026-09-22) with a single sharded (TP=2) model copy across both
 nodes, each verified on distinct nodes by the collect phase's pod-placement hard gate — slower than
 S1 (~46 tok/s vs. ~135 tok/s, expected: an 8B model doesn't need sharding, so TP=2 here is pure
 cross-node communication overhead) but reproducible (within ~0.6%). All three scenarios share
 `GPU_MEMORY_UTILIZATION=0.85` (`workflow/config/common.env`, needed to leave CUDA-graph-capture
 headroom under cross-node TP), so the S1 vs. S3 comparison isn't confounded by differing GPU-memory
-settings.
+settings. ³ The collect-phase telemetry gate also includes the llm-d router's EPP pool-readiness
+(`inference_pool_ready_pods`) and per-backend queue-depth (`inference_pool_per_pod_queue_size`, a
+routing-pressure diagnostic, not a load-balancing proof) gauges, plus the vLLM TTFT/e2e-latency
+`_sum` series for live-queryable average latency — see the
+[Telemetry Specification](docs/specs/telemetry.md). Verified live on S1; the evidence linked above
+will be refreshed once S2/S3 are verified the same way.
 
 ## Quickstart
 
@@ -75,19 +83,34 @@ result interpretation, troubleshooting, and reproduction.
 | Path | What |
 |------|------|
 | [`workflow/`](workflow/) | The reusable containerised end-to-end workflow (phase scripts, config, templates, Dockerfile, Makefile). See [`workflow/README.md`](workflow/README.md). |
-| [`docs/specs/`](docs/specs/) | Experiment specifications — the [common setup](docs/specs/common-experiment-setup.md) + per-scenario specs (as-built for S1/S2/S3). |
+| [`docs/specs/`](docs/specs/) | Experiment specifications — the [common setup](docs/specs/common-experiment-setup.md), per-scenario specs (as-built for S1/S2/S3), and the [Telemetry Specification](docs/specs/telemetry.md) (T6.1). |
 | [`docs/scenarios/`](docs/scenarios/) | Operator runbooks — [Scenario 1](docs/scenarios/scenario-1.md), [Scenario 2](docs/scenarios/scenario-2.md), [Scenario 3](docs/scenarios/scenario-3.md). |
 | [`docs/evidence/`](docs/evidence/) | Committed verification evidence (sanitized run artifacts, Git LFS). |
+| [`workflow/templates/benchmark-dashboard.json`](workflow/templates/benchmark-dashboard.json) | This repo's own Grafana dashboard (plain, importable JSON), auto-provisioned during `prepare`. |
 
 ## Status
 
 Scenario 1 (T3) is the **reference implementation** — implemented, verified (two consecutive runs),
 and documented. Scenario 2 (T4) reuses the workflow with only per-scenario config, plus a small
-readiness refinement so load waits for both replicas and a least-busy endpoint-picker routing
-default; it is implemented, documented, and verified by two consecutive PASS runs with reproducible
-~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
+readiness refinement so load waits for both replicas and a uniform-random endpoint-picker routing
+default (`random-picker.yaml` — see [scenario-2 spec
+§7](docs/specs/scenario-2-replicated.md#7-known-limitations) for why the least-busy alternative
+isn't used); it is implemented, documented, and verified by two consecutive PASS runs with
+reproducible ~2.8× throughput scaling over S1. Scenario 3 (T5) reuses the same workflow at the shared
 `GPU_MEMORY_UTILIZATION=0.85` default (`common.env`; cross-node tensor parallelism otherwise OOMs
 during CUDA-graph capture); it is implemented, documented, and verified by two consecutive PASS
 runs demonstrating a genuine cross-node model shard, with the collect phase's pod-placement hard
 gate confirming the leader and worker land on
 distinct nodes. A published documentation page is a follow-up.
+
+**Observability (T6)** is in progress. T6.1 (telemetry spec), T6.2/T6.3 (verified metric collection),
+and T6.4 (Grafana dashboard) are implemented and verified on Scenario 1:
+[`docs/specs/telemetry.md`](docs/specs/telemetry.md) documents every collected metric's
+source/unit/labels/interpretation (vLLM, DCGM, and the llm-d router's EPP pool-readiness and
+per-backend queue-depth gauges), each collected as a time series over the run's serving window.
+`prepare` provisions an explicit `Grafana` + `GrafanaDatasource` CR pair (derived from k0rdent
+KOF's own reference implementation) wired to this cluster's own VictoriaMetrics, plus this repo's
+own [run-overview dashboard](workflow/templates/benchmark-dashboard.json) — viewable by running
+with `--keep` (the cluster, Grafana included, is destroyed at cleanup otherwise; see
+[`workflow/README.md`](workflow/README.md)). Remaining: verify S2/S3 the same way (two consecutive
+clean runs each), then promote T6.5 (as-built telemetry docs with observed values per scenario).

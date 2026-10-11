@@ -58,9 +58,14 @@ spec:
                 --synthetic-input-tokens-mean ${LOAD_INPUT_TOKENS} \
                 --output-tokens-mean ${LOAD_OUTPUT_TOKENS} \
                 --artifact-dir /tmp/aiperf
-              # find always exits 0, so an empty result would silently produce an
-              # empty export — check explicitly and fail loudly with diagnostics.
-              json="$(find /tmp/aiperf -type f -name 'profile_export_aiperf.json' -print -quit)"
+              # aiperf also writes a per-phase export under phases/{warmup,profiling}/
+              # with the SAME filename as the combined top-level export this
+              # workflow actually wants (the one its own CLI output reports as
+              # "JSON Export: /tmp/aiperf/profile_export_aiperf.json") — -maxdepth 1
+              # keeps find from matching one of those instead. find always exits 0,
+              # so an empty result would silently produce an empty export — check
+              # explicitly and fail loudly with diagnostics.
+              json="$(find /tmp/aiperf -maxdepth 1 -type f -name 'profile_export_aiperf.json' -print -quit)"
               if [[ -z "$json" || ! -s "$json" ]]; then
                 echo "ERROR: aiperf JSON export not found or empty" >&2
                 echo "Artifacts produced under /tmp/aiperf:" >&2

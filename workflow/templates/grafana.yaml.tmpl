@@ -1,0 +1,56 @@
+# Explicit Grafana instance, applied by 20-prepare.sh once
+# grafana-operator's CRDs are registered (kof-operators, part of the KOF
+# release). KOF's own Grafana bundling is opt-in and still expects the
+# instance itself to be hand-authored — this is derived directly from
+# k0rdent KOF's own reference implementation (kof-storage chart, v1.8.0):
+# https://github.com/k0rdent/kof/blob/v1.8.0/charts/kof-storage/templates/grafana/grafana.yaml
+# https://github.com/k0rdent/kof/blob/v1.8.0/charts/kof-storage/values.yaml
+# Same name (`grafana-vm`), same `dashboards: grafana` instanceSelector label,
+# same PVC size/fsGroup/plugin — kof-storage only renders this behind an
+# internal `installForTests`-gated flag, not exposed for normal reuse, so we
+# apply our own copy directly instead of trying to toggle that chart's values.
+#
+# Deviation from upstream: no `disableDefaultAdminSecret` / custom
+# admin-credentials Secret. Upstream wires a hand-rolled Secret (random
+# username/password generated once via Helm's randAlpha, kept across
+# upgrades) because it's a shared, long-lived instance. This benchmark's
+# cluster (Grafana included) is destroyed at cleanup after every run, so
+# there's nothing to keep in sync across runs — leaving
+# disableDefaultAdminSecret unset lets grafana-operator create its own
+# default `grafana-vm-admin-credentials` Secret, retrievable the same way:
+#   kubectl -n ${KOF_NAMESPACE} get secret grafana-vm-admin-credentials \
+#     -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana-vm
+  namespace: ${KOF_NAMESPACE}
+  labels:
+    dashboards: grafana
+spec:
+  persistentVolumeClaim:
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 200Mi
+  deployment:
+    spec:
+      template:
+        spec:
+          securityContext:
+            fsGroup: 472
+          volumes:
+            - name: grafana-data
+              persistentVolumeClaim:
+                claimName: grafana-vm-pvc
+          containers:
+            - name: grafana
+              env:
+                # Only the metrics plugin — this benchmark has no logs/traces
+                # datasource (VictoriaLogs/VictoriaTraces are disabled in
+                # kof-values.yaml), unlike upstream's reference values.yaml
+                # which wires all three.
+                - name: GF_INSTALL_PLUGINS
+                  value: "victoriametrics-metrics-datasource 0.19.4"

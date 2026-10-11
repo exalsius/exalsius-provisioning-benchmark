@@ -79,6 +79,46 @@ _wait_kof_helmreleases() {
   done
 }
 
+# Wait for the (hand-applied) Grafana CR's own Ready condition. Separate from
+# _wait_kof_helmreleases above, which only proves grafana-operator itself is
+# running — the Grafana instance it then reconciles is a second, independent
+# readiness signal. grafana-operator reports this as condition type
+# "GrafanaReady", not the generic "Ready".
+_wait_grafana_ready() {
+  local name="grafana-vm" ns="$KOF_NAMESPACE" timeout="${1:-300}"
+  local deadline=$(( $(date +%s) + timeout )) status
+  log "waiting (≤${timeout}s) for Grafana CR '$name' to report Ready"
+  while :; do
+    status="$(kc -n "$ns" get grafana "$name" \
+      -o jsonpath='{.status.conditions[?(@.type=="GrafanaReady")].status}' 2>/dev/null || true)"
+    [[ "$status" == "True" ]] && { info "Grafana '$name' Ready"; return 0; }
+    (( $(date +%s) < deadline )) || \
+      die "timeout waiting for Grafana CR '$name' to become Ready (last status: '${status:-none}')"
+    sleep 10
+  done
+}
+
+# Wait for a grafana-operator "leaf" CR (GrafanaDatasource, GrafanaDashboard, ...)
+# to report its own <Kind>Synchronized condition True. kubectl apply only proves
+# Kubernetes accepted the object, not that grafana-operator successfully synced
+# it into the matched Grafana instance(s) — these CRs don't use a "Ready"
+# condition (unlike the Grafana CR itself); grafana-operator's shared
+# buildSynchronizedCondition() helper sets a per-kind "<Kind>Synchronized"
+# condition instead (e.g. "DatasourceSynchronized", "DashboardSynchronized").
+_wait_grafana_synced() {
+  local kind="$1" name="$2" condition_type="$3" ns="$KOF_NAMESPACE" timeout="${4:-120}"
+  local deadline=$(( $(date +%s) + timeout )) status
+  log "waiting (≤${timeout}s) for $kind '$name' to report $condition_type"
+  while :; do
+    status="$(kc -n "$ns" get "$kind" "$name" \
+      -o jsonpath="{.status.conditions[?(@.type==\"$condition_type\")].status}" 2>/dev/null || true)"
+    [[ "$status" == "True" ]] && { info "$kind '$name' synchronized"; return 0; }
+    (( $(date +%s) < deadline )) || \
+      die "timeout waiting for $kind '$name' to report $condition_type=True (last status: '${status:-none}')"
+    sleep 5
+  done
+}
+
 # Trim the KCM Management's provider list to KCM_PROVIDERS so unused cloud CAPI
 # providers (aws/azure/gcp/docker/...) are uninstalled — we adopt, not provision.
 # Patching (vs. createManagement=false) keeps KCM's own core config intact.
@@ -133,6 +173,43 @@ phase_prepare() {
     -f "$WORKFLOW_ROOT/templates/kof-values.yaml" --wait --timeout 20m 2>&1 | tee -a "$logf"
   # The umbrella only creates the HelmRelease CRs; wait until they reconcile Ready.
   _wait_kof_helmreleases "$TIMEOUT_KOF"
+
+  # T6.4: Grafana, wired to VictoriaMetrics via explicit CRs, mirroring
+  # k0rdent's own kof-grafana guide (Grafana installation/auto-config is
+  # opt-in-only in KOF — kof-values.yaml enables the operator + feature flag,
+  # but the instance and datasource are still hand-authored, same as upstream).
+  wait_for 300 "grafana-operator CRDs registered (KOF prerequisite)" \
+    kc get crd grafanas.grafana.integreatly.org
+  log "installing Grafana"
+  render "$WORKFLOW_ROOT/templates/grafana.yaml.tmpl" "$RUN_DIR/manifests/grafana.yaml"
+  run kc apply -f "$RUN_DIR/manifests/grafana.yaml" 2>&1 | tee -a "$logf"
+  _wait_grafana_ready 300
+
+  log "wiring Grafana to VictoriaMetrics"
+  render "$WORKFLOW_ROOT/templates/grafana-datasource.yaml.tmpl" "$RUN_DIR/manifests/grafana-datasource.yaml"
+  run kc apply -f "$RUN_DIR/manifests/grafana-datasource.yaml" 2>&1 | tee -a "$logf"
+  _wait_grafana_synced grafanadatasource metrics DatasourceSynchronized
+
+  # The one dashboard this repo owns: a single-pane "is this run healthy" view
+  # scoped to exactly this benchmark's required metrics and acceptance-criteria
+  # story (EPP pool-readiness/distribution, per-node/per-pod GPU + vLLM series,
+  # live-computed average TTFT/e2e latency). The dashboard JSON itself
+  # (templates/benchmark-dashboard.json) is plain and importable into any
+  # Grafana; wrapped here in a GrafanaDashboard CR (built with jq, not envsubst
+  # — the file is JSON, not one of our ${VAR} templates) so it's
+  # auto-provisioned the same way as everything else in this phase.
+  log "installing the benchmark run-overview dashboard"
+  jq -n --slurpfile dash "$WORKFLOW_ROOT/templates/benchmark-dashboard.json" --arg ns "$KOF_NAMESPACE" '{
+    apiVersion: "grafana.integreatly.org/v1beta1",
+    kind: "GrafanaDashboard",
+    metadata: { name: "exalsius-benchmark-overview", namespace: $ns },
+    spec: {
+      instanceSelector: { matchLabels: { dashboards: "grafana" } },
+      folder: "Exalsius Benchmark",
+      json: ($dash[0] | tojson)
+    }
+  }' | run kc apply -f - 2>&1 | tee -a "$logf"
+  _wait_grafana_synced grafanadashboard exalsius-benchmark-overview DashboardSynchronized
 
   log "installing exalsius-operator"
   run hlm upgrade --install exalsius-operator "$EXALSIUS_OPERATOR_CHART" \
