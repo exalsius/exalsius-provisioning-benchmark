@@ -6,11 +6,12 @@ live in a Git LFS tarball alongside this file:
 - `../scenario-1.tar.gz` — sanitized artifacts of two consecutive clean runs (`run-1/`, `run-2/`),
   tracked via Git LFS (see repo `.gitattributes`).
 
-> **Status: PASS.** Two consecutive clean-state runs completed on 2026-09-22, both meeting the
-> functional acceptance criteria (T3.2): the `WorkspaceDeployment` Ready/Available hard gate and the
-> pod-placement hard gate (trivial with one pod — `results/pod-placement.txt`) both passed. run-2
-> started 2 s after run-1's cleanup tore down the k0s cluster on the same node — consecutive from a
-> fresh cluster, not a rebooted/bare node (see
+> **Status: PASS.** Two consecutive clean-state runs completed on 2026-10-11, both meeting the
+> functional acceptance criteria (T3.2, T6.2): the `WorkspaceDeployment` Ready/Available hard gate,
+> the pod-placement hard gate (trivial with one pod — `results/pod-placement.txt`), and the
+> telemetry gate (all required series present, including the llm-d router's EPP metrics) all passed.
+> run-2 started immediately after run-1's cleanup tore down the k0s cluster on the same node —
+> consecutive from a fresh cluster, not a rebooted/bare node (see
 > [`../../scenarios/scenario-1.md` §6](../../scenarios/scenario-1.md#6-known-limitations)).
 > `GPU_MEMORY_UTILIZATION=0.85` (set in `workflow/config/common.env`, shared across all three
 > scenarios so `DCGM_FI_DEV_FB_USED` stays comparable between them).
@@ -49,11 +50,8 @@ Operator installed one during `prepare`, confirmed by both runs' `prepare.log`
 
 | Run | Workflow commit | Node / GPU | Model | Start (UTC) | Duration | Verdict |
 |-----|-----------------|------------|-------|-------------|----------|---------|
-| run-1 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:22:36Z | ~23 min | **PASS** |
-| run-2 | `main` † | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-09-22T06:45:43Z | ~23 min | **PASS** |
-
-† Runs were produced ahead of merge, on the branch that became `main` at tip `f034cdc` (#5, which
-adds the pod-placement hard gate and the shared `GPU_MEMORY_UTILIZATION=0.85` default).
+| run-1 | `main` @ `2d2ccac` | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-10-11T06:46:58Z | ~25 min | **PASS** |
+| run-2 | `main` @ `2d2ccac` | Nebius L40S VM (1× L40S 48 GB) | `Qwen/Qwen3-8B` | 2026-10-11T07:11:37Z | ~24 min | **PASS** |
 
 ## Acceptance (both runs)
 
@@ -74,12 +72,12 @@ adds the pod-placement hard gate and the shared `GPU_MEMORY_UTILIZATION=0.85` de
 
 | Metric | run-1 | run-2 |
 |---|---|---|
-| Output token throughput | 134.92 tok/s | 135.17 tok/s |
-| Request throughput | 1.05 req/s | 1.06 req/s |
-| TTFT p50 / p90 | 6349.85 / 6386.12 ms | 6334.55 / 6369.42 ms |
-| Request latency (e2e) p50 / p90 | 9458.41 / 9482.09 ms | 9438.82 / 9464.49 ms |
-| Inter-token latency p50 | 24.48 ms | 24.45 ms |
-| Output sequence length | 128 tokens | 128 tokens |
+| Output token throughput | 520.75 tok/s | 520.97 tok/s |
+| Request throughput | 4.07 req/s | 4.07 req/s |
+| TTFT p50 / p90 | 402.25 / 461.24 ms | 401.82 / 458.45 ms |
+| Request latency (e2e) p50 / p90 | 3839.88 / 3852.76 ms | 3837.77 / 3849.43 ms |
+| Inter-token latency p50 | 27.08 ms | 27.04 ms |
+| Output sequence length | ~128 tokens | ~128 tokens |
 
-The two runs agree within ~0.2% on throughput and latency — this is the single-node baseline S2
-(throughput scaling) and S3 (sharding overhead) are compared against.
+The two runs agree within ~0.05% on throughput and latency — this is the single-node baseline S2
+(replica distribution) and S3 (sharding overhead) are compared against.
